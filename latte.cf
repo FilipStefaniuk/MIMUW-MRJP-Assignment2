@@ -2,83 +2,100 @@
 
 entrypoints Program ;
 
-Prog.        Program ::= [TopDef] ;
+Prog.           Program ::= [TopDef] ;
 
-FnDef.	        TopDef ::= Type Ident "(" [Arg] ")" Block ;
 separator nonempty TopDef "" ;
+TopFunDef.      TopDef ::= FunDef ;	        
+ClassDef.       TopDef ::= "class" Ident "{" [ClassItemDef] "}" ;
+ClassExtDef.    TopDef ::= "class" Ident "extends" Ident "{" [ClassItemDef] "}" ;
 
-Ar. 	         Arg ::= Type Ident;
-separator        Arg "," ;
+separator ClassItemDef "" ;
+AttrDef.        ClassItemDef ::= Type Ident ";" ;
+MethodDef.      ClassItemDef ::= FunDef ;
+
+FunDef.         FunDef ::= Type Ident "(" [Arg] ")" Block ;
+VoidFunDef.     FunDef ::= "void" Ident "(" [Arg] ")" Block ;
+
+separator Arg "," ;
+Ar. 	        Arg ::= Type Ident;
 
 -- statements ----------------------------------------------
 
-Blk.     Block ::= "{" [Stmt] "}" ;
+Blk.            Block ::= "{" [Stmt] "}" ;
 
-Empty.     Stmt ::= ";" ;
-BStmt.     Stmt ::= Block ;
-Decl.      Stmt ::= Type [Item] ";" ;
-Ass.       Stmt ::= Ident "=" Expr  ";" ;
-Incr.      Stmt ::= Ident "++"  ";" ;
-Decr.      Stmt ::= Ident "--"  ";" ;
-Ret.       Stmt ::= "return" Expr ";" ;
-VRet.      Stmt ::= "return" ";" ;
-Cond.      Stmt ::= "if" "(" Expr ")" Stmt  ;
-CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
-While.     Stmt ::= "while" "(" Expr ")" Stmt ;
-SExp.      Stmt ::= Expr  ";" ;
-separator  Stmt "" ;
+separator Stmt "" ;
+Empty.          Stmt ::= ";" ;
+BStmt.          Stmt ::= Block ;
+Decl.           Stmt ::= Type [Item] ";" ;
+Ass.            Stmt ::= LVal "=" Expr  ";" ;
+Incr.           Stmt ::= LVal "++"  ";" ;
+Decr.           Stmt ::= LVal "--"  ";" ;
+Ret.            Stmt ::= "return" Expr ";" ;
+VRet.           Stmt ::= "return" ";" ;
+Cond.           Stmt ::= "if" "(" Expr ")" Stmt  ;
+CondElse.       Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
+While.          Stmt ::= "while" "(" Expr ")" Stmt ;
+For.            Stmt ::= "for" "(" Type Ident ":" Expr ")" Stmt ;
+SExp.           Stmt ::= Expr  ";" ; 
 
-NoInit.    Item ::= Ident ; 
-Init.      Item ::= Ident "=" Expr ;
 separator nonempty Item "," ;
+NoInit.         Item ::= Ident ; 
+Init.           Item ::= Ident "=" Expr ;
 
--- Types ---------------------------------------------------
+-- lval ----------------------------------------------------
 
-Int.       Type ::= "int" ;
-Str.       Type ::= "string" ;
-Bool.      Type ::= "boolean" ;
-Void.      Type ::= "void" ;
+LVar.           LVal ::= Ident ;
+LArr.           LVal ::= Expr7 "[" Expr "]" ;
+LAttr.          LVal ::= Expr7 "." Ident ;
 
-internal   Fun. Type ::= Type "(" [Type] ")" ;
+-- types ---------------------------------------------------
 
-separator  Type "," ;
+Int.            Type ::= "int" ;
+Str.            Type ::= "string" ;
+Bool.           Type ::= "boolean" ;
+Arr.            Type ::= Ident "[]" ;
+Obj.            Type ::= Ident ;
 
--- Expressions ---------------------------------------------
+-- expressions ---------------------------------------------
 
-EVar.      Expr6 ::= Ident ;
-ELitInt.   Expr6 ::= Integer ;
-ELitTrue.  Expr6 ::= "true" ;
-ELitFalse. Expr6 ::= "false" ;
-EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
-EString.   Expr6 ::= String ;
-Neg.       Expr5 ::= "-" Expr6 ;
-Not.       Expr5 ::= "!" Expr6 ;
-EMul.      Expr4 ::= Expr4 MulOp Expr5 ;
-EAdd.      Expr3 ::= Expr3 AddOp Expr4 ;
-ERel.      Expr2 ::= Expr2 RelOp Expr3 ;
-EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
-EOr.       Expr ::= Expr1 "||" Expr ;
-coercions  Expr 6 ;
-separator  Expr "," ;
+separator Expr "," ;
+coercions Expr 7 ;
+ELitInt.        Expr7 ::= Integer ;
+EString.        Expr7 ::= String ;
+ELitTrue.       Expr7 ::= "true" ;
+ELitFalse.      Expr7 ::= "false" ;
+Null.           Expr7 ::= "null" ;
+EVar.           Expr7 ::= LVal ;
+ECall.          Expr7 ::= Ident "(" [Expr] ")" ;
+EMetCall.       Expr7 ::= Expr7 "." Ident "(" [Expr] ")" ;
+ENewObj.        Expr6 ::= "new" Ident ;
+ENewArr.        Expr6 ::= "new" Type "[" Expr "]" ;
+Neg.            Expr5 ::= "-" Expr6 ;
+Not.            Expr5 ::= "!" Expr6 ;
+EMul.           Expr4 ::= Expr4 MulOp Expr5 ;
+EAdd.           Expr3 ::= Expr3 AddOp Expr4 ;
+ERel.           Expr2 ::= Expr2 RelOp Expr3 ;
+EAnd.           Expr1 ::= Expr2 "&&" Expr1 ;
+EOr.            Expr ::= Expr1 "||" Expr ;
 
 -- operators -----------------------------------------------
 
-Plus.      AddOp ::= "+" ;
-Minus.     AddOp ::= "-" ;
+Plus.           AddOp ::= "+" ;
+Minus.          AddOp ::= "-" ;
 
-Times.     MulOp ::= "*" ;
-Div.       MulOp ::= "/" ;
-Mod.       MulOp ::= "%" ;
+Times.          MulOp ::= "*" ;
+Div.            MulOp ::= "/" ;
+Mod.            MulOp ::= "%" ;
 
-LTH.       RelOp ::= "<" ;
-LE.        RelOp ::= "<=" ;
-GTH.       RelOp ::= ">" ;
-GE.        RelOp ::= ">=" ;
-EQU.       RelOp ::= "==" ;
-NE.        RelOp ::= "!=" ;
+LTH.            RelOp ::= "<" ;
+LE.             RelOp ::= "<=" ;
+GTH.            RelOp ::= ">" ;
+GE.             RelOp ::= ">=" ;
+EQU.            RelOp ::= "==" ;
+NE.             RelOp ::= "!=" ;
 
 -- comments ------------------------------------------------
 
-comment    "#" ;
-comment    "//" ;
-comment    "/*" "*/" ;
+comment "#" ;
+comment "//" ;
+comment "/*" "*/" ;
