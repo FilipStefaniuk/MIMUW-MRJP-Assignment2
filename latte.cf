@@ -14,7 +14,6 @@ AttrDef.        ClassItemDef ::= Type Ident ";" ;
 MethodDef.      ClassItemDef ::= FunDef ;
 
 FunDef.         FunDef ::= Type Ident "(" [Arg] ")" Block ;
-VoidFunDef.     FunDef ::= "void" Ident "(" [Arg] ")" Block ;
 
 separator Arg "," ;
 Ar. 	        Arg ::= Type Ident;
@@ -50,6 +49,7 @@ LAttr.          LVal ::= Expr7 "." Ident ;
 
 -- types ---------------------------------------------------
 
+Void.           Type ::= "void" ;
 Int.            Type ::= "int" ;
 Str.            Type ::= "string" ;
 Bool.           Type ::= "boolean" ;

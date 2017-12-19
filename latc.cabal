@@ -22,13 +22,15 @@ library
                        SkelLatte,
                        PrintLatte,
                        AbsLatte,
-                       ErrM
+                       ErrM,
+                       Frontend
   build-depends:       base >=4.9 && <4.10,
                        mtl,
                        containers,
                        transformers,
                        array
-  hs-source-dirs:      ./src/BNFC-gen/
+  hs-source-dirs:      ./src/BNFC-gen/,
+                       ./src/Compiler
   build-tools:         alex, happy
   default-language:    Haskell2010
   -- ghc-options:         -Wall

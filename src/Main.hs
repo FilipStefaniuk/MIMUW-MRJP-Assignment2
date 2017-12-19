@@ -11,6 +11,7 @@ module Main where
     import PrintLatte
     import AbsLatte
     
+    import Frontend
     
     
     
@@ -29,16 +30,15 @@ module Main where
     runFile v p f = putStrLn f >> readFile f >>= run v p
     
     run :: (Print a, Show a) => Verbosity -> ParseFun a -> String -> IO ()
-    run v p s = let ts = myLLexer s in case p ts of
+    run v p s = let ts = myLLexer s in case pProgram ts of
                Bad s    -> do putStrLn "\nParse              Failed...\n"
                               putStrV v "Tokens:"
                               putStrV v $ show ts
                               putStrLn s
                               exitFailure
-               Ok  tree -> do putStrLn "\nParse Successful!"
-                              showTree v tree
-    
-                              exitSuccess
+               Ok  tree -> case checkProgram tree of
+                Left e -> putStrLn $ show e
+                Right _ -> putStrLn "Ok"
     
     
     showTree :: (Show a, Print a) => Int -> a -> IO ()
