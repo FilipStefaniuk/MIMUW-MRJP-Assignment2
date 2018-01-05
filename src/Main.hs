@@ -7,11 +7,14 @@ module Main where
     
     import LexLatte
     import ParLatte
-    import SkelLatte
+    -- import SkelLatte
     import PrintLatte
     import AbsLatte
     
+    import qualified PrintLLVM
+
     import Frontend
+    import Middleend
     
     
     
@@ -38,8 +41,10 @@ module Main where
                               exitFailure
                Ok  tree -> case checkProgram tree of
                 Left e -> putStrLn $ show e
-                Right _ -> putStrLn "Ok"
-    
+                Right _ -> do
+                  t <- transProgram tree
+                  putStrV 2 $ PrintLLVM.printTree t
+                -- Right _ -> putStrV 2 $ printTree tree
     
     showTree :: (Show a, Print a) => Int -> a -> IO ()
     showTree v tree

@@ -1,0 +1,66 @@
+-- program -------------------------------------------------------------------
+
+entrypoints Program ;
+
+Prog.       Program ::= [TopDef] ;
+
+FunDecl.    TopDef ::= "declare" Type Ident "(" [Type] ")" ;
+FunDef.     TopDef ::= "define" Type Ident "(" [Arg] ")" "{" FirstBlock "\n" [CodeBlock] "}" ;
+
+Arg.            Arg ::= Type Ident ;
+
+-- values --------------------------------------------------------------------
+
+ValVar.         Val ::= Ident ;
+ValConst.       Val ::= Integer ;
+
+-- types ----------------------------------------------------------------------
+
+TInt.           Type ::= "i32" ;
+TBool.          Type ::= "i1" ;
+TPtr.           Type ::= Type "*" ;
+
+-- instructions ---------------------------------------------------------------
+
+FirstBlock.     FirstBlock ::= [DeclInstr] "\n" JmpInstr ;
+
+CodeBlock.      CodeBlock ::= Ident ":" "\n" [Instr] "\n" JmpInstr ;
+
+StmBr.          JmpInstr ::= "br" "label" Ident ;
+StmCBr.         JmpInstr ::= "br" Type Ident "," "label" Ident "," "label" Ident ;
+StmVoidRet.     JmpInstr ::= "ret" "void" ;
+StmRet.         JmpInstr ::= "ret" Type Val ;
+
+Alloca.         DeclInstr ::= Ident "=" "alloca" Type ;
+
+StmOpBin.       Instr ::= Ident "=" Op Type Val "," Val ;
+ICmp.           Instr ::= Ident "=" "icmp" Cond Type Val "," Val ;
+Call.           Instr ::= Ident "=" "call" Type Ident "(" [Arg] ")" ; 
+Load.           Instr ::= Ident "=" "load" Type "," Type Ident ;
+Store.          Instr ::= "store" Type Val "," Type Ident ;
+
+-- operations -----------------------------------------------------------------
+
+Add.            Op ::= "add" ;
+Sub.            Op ::= "sub" ;
+Mul.            Op ::= "mul" ;
+SDiv.           Op ::= "sdiv" ;
+SRem.           Op ::= "srem" ;
+And.            Op ::= "and" ;
+Or.             Op ::= "or" ;
+
+Eq.             Cond ::= "eq" ;
+Ne.             Cond ::= "ne" ;
+Sgt.            Cond ::= "sgt" ;
+Sge.            Cond ::= "sge" ;
+Slt.            Cond ::= "slt" ;
+Sle.            Cond ::= "sle" ;
+
+separator nonempty TopDef "" ;
+separator CodeBlock "\n" ;
+separator DeclInstr "\n" ;
+separator Instr "\n" ;
+separator Type "," ;
+separator Arg "," ;
+
+comment ";" ;

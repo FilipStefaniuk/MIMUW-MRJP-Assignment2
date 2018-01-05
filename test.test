@@ -1,0 +1,11 @@
+./tests/good/simple.latte
+declare void @printString (i8)
+ declare void @error () 
+ declare i32 @readInt () 
+ declare i8 * @readString () 
+ declare i8 * @_appendString () 
+ declare i8 * @malloc () 
+ define i32 @main () {
+  ret i32 0 
+}
+

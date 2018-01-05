@@ -22,8 +22,11 @@ library
                        SkelLatte,
                        PrintLatte,
                        AbsLatte,
+                       PrintLLVM,
+                       AbsLLVM,
                        ErrM,
-                       Frontend
+                       Frontend,
+                       Middleend
   build-depends:       base >=4.9 && <4.10,
                        mtl,
                        containers,

@@ -53,7 +53,7 @@ Void.           Type ::= "void" ;
 Int.            Type ::= "int" ;
 Str.            Type ::= "string" ;
 Bool.           Type ::= "boolean" ;
-Arr.            Type ::= Ident "[]" ;
+Arr.            Type ::= Type "[]" ;
 Obj.            Type ::= Ident ;
 
 -- expressions ---------------------------------------------
