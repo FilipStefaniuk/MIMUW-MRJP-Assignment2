@@ -4,6 +4,7 @@ entrypoints Program ;
 
 Prog.       Program ::= [TopDef] ;
 
+StrDecl.    TopDef ::= Ident "=" "private" "constant" Type "c" String ;
 FunDecl.    TopDef ::= "declare" Type Ident "(" [Type] ")" ;
 FunDef.     TopDef ::= "define" Type Ident "(" [Arg] ")" "{" FirstBlock "\n" [CodeBlock] "}" ;
 
@@ -16,18 +17,21 @@ ValConst.       Val ::= Integer ;
 
 -- types ----------------------------------------------------------------------
 
-TInt.           Type ::= "i32" ;
 TBool.          Type ::= "i1" ;
+TSm.            Type ::= "i8" ;
+TInt.           Type ::= "i32" ;
+TVoid.          Type ::= "void" ;
+TArr.           Type ::= "[" Integer "x" Type "]" ;
 TPtr.           Type ::= Type "*" ;
 
 -- instructions ---------------------------------------------------------------
 
-FirstBlock.     FirstBlock ::= [DeclInstr] "\n" JmpInstr ;
+FirstBlock.     FirstBlock ::= [DeclInstr] "\n" [Instr] "\n" JmpInstr ;
 
 CodeBlock.      CodeBlock ::= Ident ":" "\n" [Instr] "\n" JmpInstr ;
 
 StmBr.          JmpInstr ::= "br" "label" Ident ;
-StmCBr.         JmpInstr ::= "br" Type Ident "," "label" Ident "," "label" Ident ;
+StmCBr.         JmpInstr ::= "br" Type Val "," "label" Ident "," "label" Ident ;
 StmVoidRet.     JmpInstr ::= "ret" "void" ;
 StmRet.         JmpInstr ::= "ret" Type Val ;
 
@@ -35,9 +39,13 @@ Alloca.         DeclInstr ::= Ident "=" "alloca" Type ;
 
 StmOpBin.       Instr ::= Ident "=" Op Type Val "," Val ;
 ICmp.           Instr ::= Ident "=" "icmp" Cond Type Val "," Val ;
-Call.           Instr ::= Ident "=" "call" Type Ident "(" [Arg] ")" ; 
+Call.           Instr ::= Ident "=" "call" Type Ident "(" [Item] ")" ;
+VoidCall.       Instr ::= "call" "void" Ident "(" [Item] ")" ; 
 Load.           Instr ::= Ident "=" "load" Type "," Type Ident ;
 Store.          Instr ::= "store" Type Val "," Type Ident ;
+Bitcast.        Instr ::= Ident "=" "bitcast" Type Val "to" Type ;
+
+Item.           Item ::= Type Val ;
 
 -- operations -----------------------------------------------------------------
 
@@ -62,5 +70,6 @@ separator DeclInstr "\n" ;
 separator Instr "\n" ;
 separator Type "," ;
 separator Arg "," ;
+separator Item "," ;
 
 comment ";" ;

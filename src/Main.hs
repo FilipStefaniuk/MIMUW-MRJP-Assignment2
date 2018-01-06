@@ -1,73 +1,36 @@
 module Main where
-    
-    
-    import System.IO ( stdin, hGetContents )
-    import System.Environment ( getArgs, getProgName )
-    import System.Exit ( exitFailure, exitSuccess )
-    
-    import LexLatte
-    import ParLatte
-    -- import SkelLatte
-    import PrintLatte
-    import AbsLatte
-    
-    import qualified PrintLLVM
 
-    import Frontend
-    import Middleend
-    
-    
-    
-    import ErrM
-    
-    type ParseFun a = [Token] -> Err a
-    
-    myLLexer = myLexer
-    
-    type Verbosity = Int
-    
-    putStrV :: Verbosity -> String -> IO ()
-    putStrV v s = if v > 1 then putStrLn s else return ()
-    
-    runFile :: (Print a, Show a) => Verbosity -> ParseFun a -> FilePath -> IO ()
-    runFile v p f = putStrLn f >> readFile f >>= run v p
-    
-    run :: (Print a, Show a) => Verbosity -> ParseFun a -> String -> IO ()
-    run v p s = let ts = myLLexer s in case pProgram ts of
-               Bad s    -> do putStrLn "\nParse              Failed...\n"
-                              putStrV v "Tokens:"
-                              putStrV v $ show ts
-                              putStrLn s
-                              exitFailure
-               Ok  tree -> case checkProgram tree of
-                Left e -> putStrLn $ show e
-                Right _ -> do
-                  t <- transProgram tree
-                  putStrV 2 $ PrintLLVM.printTree t
-                -- Right _ -> putStrV 2 $ printTree tree
-    
-    showTree :: (Show a, Print a) => Int -> a -> IO ()
-    showTree v tree
-     = do
-          putStrV v $ "\n[Abstract Syntax]\n\n" ++ show tree
-          putStrV v $ "\n[Linearized tree]\n\n" ++ printTree tree
-    
-    usage :: IO ()
-    usage = do
-      putStrLn $ unlines
-        [ "usage: Call with one of the following argument combinations:"
-        , "  --help          Display this help message."
-        , "  (no arguments)  Parse stdin verbosely."
-        , "  (files)         Parse content of files verbosely."
-        , "  -s (files)      Silent mode. Parse content of files silently."
-        ]
-      exitFailure
-    
-    main :: IO ()
-    main = do
-      args <- getArgs
-      case args of
-        ["--help"] -> usage
-        [] -> hGetContents stdin >>= run 2 pProgram
-        "-s":fs -> mapM_ (runFile 0 pProgram) fs
-        fs -> mapM_ (runFile 2 pProgram) fs
+  import System.Environment
+  import System.Process   
+  import System.Exit 
+  import System.FilePath.Posix
+
+  import LexLatte
+  import ParLatte
+  import ErrM
+
+  import EmitLLVM
+  import Frontend
+  import Middleend
+
+  main :: IO ()
+  main = getArgs >>= handle
+
+  handle :: [String] -> IO ()
+  handle ["-h"] = putStrLn "Usage: latc_llvm [-h] [file...]"  
+  handle [] = getContents >>= compile >>= putStr
+  handle fs = mapM_ compileFile fs
+
+  compileFile :: String -> IO ExitCode
+  compileFile inputFilename = let outputFilename = replaceExtension inputFilename "ll" in
+      readFile inputFilename >>= compile >>= writeFile outputFilename >>
+      rawSystem "llvm-as" ["-o", "tmp.bc",  outputFilename] >>       
+      rawSystem "llvm-link" ["-o", replaceExtension outputFilename "bc", "lib/runtime.bc", "tmp.bc"] >>
+      rawSystem "rm" ["tmp.bc"]
+
+  compile :: String -> IO String
+  compile input = case pProgram $ myLexer input of
+    Bad e -> exitWith (ExitFailure 1)
+    Ok a -> case checkProgram a of
+      Left e -> return $ show e
+      Right _ -> transProgram a >>= return . emit 

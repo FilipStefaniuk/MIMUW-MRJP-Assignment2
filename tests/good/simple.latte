@@ -1,15 +1,12 @@
-int f(int x, int y, int z) {
-	int a;
-	if (a == 2) {
-		int x;
-		x = 2 + 2 - 2;
-	} else {
-		int y;
-		y = 1;
+int f(int x) {
+	while (x < 10) {
+		x ++;
 	}
-	return 5;
+	x = x * 10;
+	return x;
 }
 
 int main() {
-	return 4;
+	printInt(f(0));
+	return 0;
 }
