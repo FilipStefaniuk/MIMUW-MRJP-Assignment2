@@ -14,7 +14,7 @@ import AbsLatte
 import ErrM
 
 data TType 
-    = TVoid | TInt | TStr | TBool | TArr TType | TObj Ident
+    = TVoid | TInt | TStr | TBool | TNull | TArr TType | TObj Ident
     deriving (Eq, Read)
 
 instance Show TType where
@@ -22,6 +22,7 @@ instance Show TType where
     show TInt = "int"
     show TStr = "string"
     show TBool = "boolean"
+    show TNull = "null"
     show (TArr type_) = (show type_) ++ "[]"
     show (TObj (Ident str)) = str
 
@@ -81,6 +82,7 @@ ttype (Void _) = TVoid
 ttype (Int _) = TInt
 ttype (Str _) = TStr
 ttype (Bool _) = TBool
+ttype (Obj _ ident) = TObj ident
 ttype (Arr _ type_)  = TArr $ ttype type_
 
 type Loc = Maybe (Int, Int)
@@ -93,7 +95,7 @@ data Error =
 
 instance Show Error where
     show (Error string) = "error: " ++ string ++ "\n"
-    show (ErrorLn nr string) = (show $ fromJust nr) ++ ": error: " ++ string
+    show (ErrorLn nr string) = let (ln, col) = fromJust nr in (show ln) ++ ":" ++ (show col) ++ ": error: " ++ string ++ "\n"
     show (InFunctionError name error) = (show error) ++ "\tin function: " ++ name ++ "\n"
     show (InClassError name error) = (show error) ++ "\tin class: " ++ name ++ "\n"
 
@@ -161,13 +163,37 @@ arrayIndexTypeError :: Loc -> Error
 arrayIndexTypeError nr =  ErrorLn nr $ "array index must be type '" ++ (show TInt) ++ "'"
 
 arrayTypeRequiredError :: Loc -> Error
-arrayTypeRequiredError nr = ErrorLn nr $ "array type required"
+arrayTypeRequiredError nr = ErrorLn nr $ "not an array type"
 
 arrayLengthTypeError :: Loc -> Error
 arrayLengthTypeError nr = ErrorLn nr $ "array length must be type '" ++ (show TInt) ++ "'"
 
 unknownTypeName :: Loc -> Ident -> Error
-unknownTypeName nr (Ident name) = ErrorLn nr $ "unknown type name '" ++ name ++ "'" 
+unknownTypeName nr (Ident name) = ErrorLn nr $ "unknown type name '" ++ name ++ "'"
+
+noFieldError :: Loc -> Ident -> Ident -> Error
+noFieldError nr (Ident className) (Ident fieldName) = ErrorLn nr $ "no field named '" ++ fieldName ++ "' in class '" ++ className ++ "'" 
+
+noMethodError :: Loc -> Ident -> Ident -> Error
+noMethodError nr (Ident className) (Ident methodName) = ErrorLn nr $ "no methond named '" ++ methodName ++ "' in class '" ++ className ++ "'"
+
+classTypeError :: Loc -> Error
+classTypeError nr = ErrorLn nr $ "not a class type"
+
+functionCallError :: Loc -> Ident -> Error
+functionCallError nr (Ident name) = ErrorLn nr $ "wrong argument types in function call '" ++ name ++ "'"
+
+methodCallError :: Loc -> Ident -> Error
+methodCallError nr (Ident name) = ErrorLn nr $ "wrong argument types in method call '" ++ name ++ "'"
+
+binaryOperatorTypesError :: Loc -> TType -> TType -> String -> Error
+binaryOperatorTypesError nr type1 type2 op = ErrorLn nr $ "incompatible types '" ++ (show type1) ++ "' and '" ++ (show type2) ++ "' for binary operator '" ++ op ++ "'"
+
+unaryOperatorTypeError :: Loc -> TType -> String -> Error
+unaryOperatorTypeError nr type_ op = ErrorLn nr $ "incompatible type '" ++ (show type_) ++ "' for unary operator '" ++ op ++ "'"
+
+unknownClassName :: Ident -> Error
+unknownClassName (Ident name) = Error $ "unknown class name '" ++ name ++ "'"
 
 -- -----------------------------------------------------------------------------------------------
 
@@ -310,7 +336,8 @@ typeCheckStmt (Ret nr expr) = lift $ do
     env <- asks env
     retType <- asks retType
     exprType <- lift . lift $ runReaderT (typeCheckExpr expr) env
-    unless (retType == exprType) . throwError $ wrongReturnTypeError nr retType exprType
+    compatibleTypes <- lift . lift $ runReaderT (isCompatible retType exprType) env
+    unless (compatibleTypes) . throwError $ wrongReturnTypeError nr retType exprType
     modify $ const True
   
 typeCheckStmt (VRet nr) = lift $ do
@@ -322,7 +349,8 @@ typeCheckStmt (Ass nr lval expr) = lift $ do
     env <- asks env
     lvalType <- lift . lift $ runReaderT (typeCheckLVal lval) env
     exprType <- lift . lift $ runReaderT (typeCheckExpr expr) env
-    unless (lvalType == exprType) . throwError $ wrongTypesError nr lvalType exprType
+    compatibleTypes <- lift . lift $ runReaderT (isCompatible lvalType exprType) env
+    unless (compatibleTypes) . throwError $ wrongTypesError nr lvalType exprType
 
 typeCheckStmt (Decl _ type_ items) = do
     lvl <- asks level
@@ -360,7 +388,8 @@ typeCheckStmt (For nr type_ ident expr stmt) = lift $ do
     case getArrElementType expType of
         Nothing -> throwError $ iterationError nr expType
         Just arrElType -> do
-            unless (arrElType == type_) . throwError $ wrongTypesError nr type_ arrElType
+            compatibleTypes <- lift . lift $ runReaderT (isCompatible type_ arrElType) env
+            unless (compatibleTypes) . throwError $ wrongTypesError nr type_ arrElType
             ctxt' <- asks $ \ctxt -> ctxt{level = lvl + 2, env = env{variables = M.insert ident (Var (lvl + 1) type_) $ variables env}}
             retStm <- lift . local (const ctxt') $ execStateT (runContT (typeCheckStmt stmt) return) False
             modify $ \ret -> ret || retStm
@@ -374,7 +403,8 @@ typeCheckItem (Init nr ident expr) = do
     env <- get
     type_ <- asks fst
     exprType <- lift . lift $ runReaderT (typeCheckExpr expr) env
-    lift . unless (type_ == exprType) . throwError $ wrongTypesError nr type_ exprType
+    compatibleTypes <- lift . lift $ runReaderT (isCompatible type_ exprType) env
+    lift . unless (compatibleTypes) . throwError $ wrongTypesError nr type_ exprType
     typeCheckItem (NoInit nr ident)
 
 typeCheckItem (NoInit nr ident) = do
@@ -402,24 +432,16 @@ typeCheckLVal (LArr nr expr1 expr2) = do
         Nothing -> throwError $ arrayTypeRequiredError nr
         Just type_ -> return type_
 
--- {- TODO:
---   - validate that type is obj
---   - validate if class exists
--- -}
--- -- Obj
--- typeCheckLVal (LAttr expr ident) = do
---     type_ <- typeCheckExpr expr
---     case type_ of
---         TObj ident -> do
---             variables <- variables <$> evalStateT (getClassEnv $ Just classIdent) S.empty
---             unless (M.member ident variables) $ throwError WrongTypes
---             return $ varType $ variables M.! classIdent
---         _ -> throwError 
+typeCheckLVal (LAttr nr expr ident) = do
+    type_ <- typeCheckExpr expr
+    case type_ of
+        TObj classIdent -> do
+            variables <- variables <$> evalStateT (getClassEnv $ Just classIdent) S.empty
+            case M.lookup ident variables of
+                Nothing -> throwError $ noFieldError nr classIdent ident
+                Just var -> return $ varType var
+        _ -> throwError $ classTypeError nr
 
-
--- {- TODO:
---   - add null type
--- -}
 typeCheckExpr ::  Expr Loc -> ReaderT Env (ExceptT Error IO) TType
 typeCheckExpr (ELitTrue _) = return TBool
 
@@ -429,26 +451,37 @@ typeCheckExpr (EString _ string) = return TStr
 
 typeCheckExpr (ELitInt _ integer) = return TInt
 
+typeCheckExpr (Null _) = return TNull
+
 typeCheckExpr (EVar _ lval) = typeCheckLVal lval
 
--- check if not a basic type
 typeCheckExpr (ENewObj nr ident) = do
     type_ <- typeCheckType $ Obj nr ident
     return $ type_
 
--- -- Check function arguments
--- typeCheckExpr (ECall ident exprs) = do
---     functions <- asks functions
---     unless (M.member ident functions) $ throwError WrongTypes
---     return . ret $ functions M.! ident
+typeCheckExpr (ECall nr ident exprs) = do
+    functions <- asks functions
+    case M.lookup ident functions of
+        Nothing -> throwError $ undeclaredIdentifierError nr ident 
+        Just fun -> do
+            types <- mapM typeCheckExpr exprs
+            compatibleTypes <- and <$> zipWithM isCompatible (args fun) types
+            unless (compatibleTypes) . throwError $ functionCallError nr ident
+            return . ret $ fun
 
--- -- Check function arguments
--- -- Error if expr type is not Obj (class)
--- typeCheckExpr (EMetCall expr ident exprs) = do
---     (Obj classIdent) <- typeCheckExpr expr
---     functions <- functions <$> evalStateT (getClassEnv $ Just classIdent) S.empty
---     unless (M.member ident functions) $ throwError WrongTypes
---     return . ret $ functions M.! classIdent  
+typeCheckExpr (EMetCall nr expr ident exprs) = do
+    type_ <- typeCheckExpr expr
+    case type_ of
+        TObj classIdent -> do
+            functions <- functions <$> evalStateT (getClassEnv $ Just classIdent) S.empty
+            case M.lookup ident functions of
+                Nothing -> throwError $ noMethodError nr classIdent ident
+                Just fun -> do
+                    types <- mapM typeCheckExpr exprs
+                    compatibleTypes <- and <$> zipWithM isCompatible (args fun) types
+                    unless (compatibleTypes) . throwError $ methodCallError nr ident
+                    return . ret $ fun  
+        _ -> throwError $ classTypeError nr
 
 typeCheckExpr (ENewArr nr type_ expr) = do
     type_ <- typeCheckType type_
@@ -456,51 +489,53 @@ typeCheckExpr (ENewArr nr type_ expr) = do
     unless (expType == TInt) . throwError $ arrayLengthTypeError nr
     return $ TArr type_
 
--- typeCheckExpr (Neg expr) = do
---     expType <- typeCheckExpr expr
---     unless (expType == TInt) $ throwError WrongTypes
---     return Int
+typeCheckExpr (Neg nr expr) = do
+    expType <- typeCheckExpr expr
+    unless (expType == TInt) . throwError $ unaryOperatorTypeError nr expType "-"
+    return TInt
 
--- typeCheckExpr (Not expr) = do
---     expType <- typeCheckExpr expr
---     unless (expType == Bool) $ throwError WrongTypes
---     return Bool
+typeCheckExpr (Not nr expr) = do
+    expType <- typeCheckExpr expr
+    unless (expType == TBool) . throwError $ unaryOperatorTypeError nr expType "!"
+    return TBool
 
--- typeCheckExpr (EMul expr1 mulop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == Int && expType2 == Int) $ throwError WrongTypes
---     return Int
+typeCheckExpr (EMul nr expr1 mulop expr2) = do
+    expType1 <- typeCheckExpr expr1
+    expType2 <- typeCheckExpr expr2
+    unless (expType1 == TInt && expType2 == TInt) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showMulOp mulop)
+    return TInt
 
--- typeCheckExpr (EAdd expr1 addop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == Int && expType2 == Int) $ throwError WrongTypes
---     return Int
+typeCheckExpr (EAdd nr expr1 addop expr2) = do
+    expType1 <- typeCheckExpr expr1
+    expType2 <- typeCheckExpr expr2
+    unless (expType1 == TInt && expType2 == TInt) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showAddOp addop)
+    return TInt
   
--- typeCheckExpr (ERel expr1 relop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == expType2) $ throwError WrongTypes
---     return Bool
-  
--- typeCheckExpr (EAnd expr1 expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == Bool && expType2 == Bool) $ throwError WrongTypes
---     return Bool
+typeCheckExpr (ERel nr expr1 relop expr2) = do
+    expType1 <- typeCheckExpr expr1
+    expType2 <- typeCheckExpr expr2
+    unless (compare relop expType1 expType2) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showRelOp relop)
+    return TBool
+    where
+        compare _ TVoid _ = False
+        compare _ _ TVoid = False
+        compare _ TInt TInt = True
+        compare _ TBool TBool = True
+        compare (EQU _) a b = a == b
+        compare (NE _) a b = a == b
+        compare _ _ _ = False 
 
--- typeCheckExpr (EOr expr1 expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == Bool && expType2 == Bool) $ throwError WrongTypes
---     return Bool
+typeCheckExpr (EAnd nr expr1 expr2) = do
+    expType1 <- typeCheckExpr expr1
+    expType2 <- typeCheckExpr expr2
+    unless (expType1 == TBool && expType2 == TBool) . throwError $ binaryOperatorTypesError nr expType1 expType2 "&&"
+    return TBool
 
--- {-
--- types TODO:
--- - Validate if declared
--- - Comparison of types for inheritence
--- -}
+typeCheckExpr (EOr nr expr1 expr2) = do
+    expType1 <- typeCheckExpr expr1
+    expType2 <- typeCheckExpr expr2
+    unless (expType1 == TBool && expType2 == TBool) . throwError $ binaryOperatorTypesError nr expType1 expType2 "||"
+    return TBool
 
 typeCheckType :: Type Loc -> ReaderT Env (ExceptT Error IO) TType
 typeCheckType (Void _) = return TVoid
@@ -512,3 +547,45 @@ typeCheckType (Obj nr ident) = do
     classes <- asks classes
     unless (M.member ident classes) . throwError $ unknownTypeName nr ident
     return $ TObj ident
+
+showAddOp :: AddOp a -> String
+showAddOp (Plus _) = "+"
+showAddOp (Minus _) = "-"
+
+showMulOp :: MulOp a -> String
+showMulOp (Times _) = "*"
+showMulOp (Div _) = "/"
+showMulOp (Mod _) = "%"
+
+showRelOp :: RelOp a -> String
+showRelOp (LTH _) = "<"
+showRelOp (LE _) =  "<="
+showRelOp (GTH _) = ">"
+showRelOp (GE _) = ">="
+showRelOp (EQU _) = "=="
+showRelOp (NE _) = "!="
+
+isCompatible :: TType -> TType -> ReaderT Env (ExceptT Error IO) Bool
+isCompatible (TObj _) TNull = return True
+isCompatible (TObj ident1) (TObj ident2) = do
+    ancestors <- execStateT (getAncestors (Just ident2)) S.empty
+    return $ S.member ident1 ancestors
+isCompatible type1 type2 = return $ type1 == type2
+
+
+getAncestors :: (Maybe Ident) -> StateT (S.Set Ident) (ReaderT Env (ExceptT Error IO)) ()
+getAncestors Nothing = return ()
+getAncestors (Just ident) = do
+    classes <- asks classes
+    case M.lookup ident classes of
+        Nothing -> throwError $ unknownClassName ident
+        (Just class_) -> do
+            idents <- get
+            when (S.member ident idents) . throwError $ inheritenceCycleError
+            modify $ S.insert ident
+            getAncestors $ parent class_
+
+-- TODO:
+-- change monad for exprs - context 
+-- add current class to context + self
+-- split to different files

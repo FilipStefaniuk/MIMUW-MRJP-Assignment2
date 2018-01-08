@@ -46,6 +46,7 @@ Init.           Item ::= Ident "=" Expr ;
 LVar.           LVal ::= Ident ;
 LArr.           LVal ::= Expr7 "[" Expr "]" ;
 LAttr.          LVal ::= Expr7 "." Ident ;
+LSelf.          LVal ::= "this" ;
 
 -- types ---------------------------------------------------
 

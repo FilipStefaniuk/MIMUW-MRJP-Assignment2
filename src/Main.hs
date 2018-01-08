@@ -30,9 +30,9 @@ module Main where
 
   compile :: String -> IO String
   compile input = case pProgram $ myLexer input of
-    Bad e -> exitWith (ExitFailure 1)
+    Bad e -> return $ show e
     Ok a -> do
       x <- checkProgram a
       case x of
         Left e -> return $ show e
-        Right _ -> return "Ok\n" --fmap emit (transProgram a)
+        Right _ -> return $ "OK\n" --fmap emit (transProgram a)

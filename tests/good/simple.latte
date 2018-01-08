@@ -1,12 +1,11 @@
-int f(int x) {
-	while (x < 10) {
-		x ++;
-	}
-	x = x * 10;
-	return x;
+class A {}
+class B extends A {}
+int f(A x) {
+	return 0;
 }
 
 int main() {
-	printInt(f(0));
+	A y = null;
+	f(y);
 	return 0;
 }
