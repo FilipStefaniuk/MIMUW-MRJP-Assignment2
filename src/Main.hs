@@ -10,7 +10,7 @@ module Main where
   import ErrM
 
   import EmitLLVM
-  import Frontend
+  import Frontend.Frontend
   import Middleend
 
   main :: IO ()
@@ -31,6 +31,8 @@ module Main where
   compile :: String -> IO String
   compile input = case pProgram $ myLexer input of
     Bad e -> exitWith (ExitFailure 1)
-    Ok a -> case checkProgram a of
-      Left e -> return $ show e
-      Right _ -> transProgram a >>= return . emit 
+    Ok a -> do
+      x <- checkProgram a
+      case x of
+        Left e -> return $ show e
+        Right _ -> return "Ok\n" --fmap emit (transProgram a)

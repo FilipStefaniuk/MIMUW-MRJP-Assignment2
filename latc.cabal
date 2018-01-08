@@ -25,7 +25,7 @@ library
                        PrintLLVM,
                        AbsLLVM,
                        ErrM,
-                       Frontend,
+                       Frontend.Frontend,
                        Middleend,
                        EmitLLVM
   build-depends:       base >=4.9 && <4.10,
