@@ -26,8 +26,10 @@ library
                        AbsLLVM,
                        ErrM,
                        Frontend.Frontend,
-                       Middleend,
-                       EmitLLVM
+                       Frontend.Error
+                       Frontend.Types
+                       Backend.Backend,
+                       Backend.EmitLLVM
   build-depends:       base >=4.9 && <4.10,
                        mtl,
                        containers,

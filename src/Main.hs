@@ -9,9 +9,9 @@ module Main where
   import ParLatte
   import ErrM
 
-  import EmitLLVM
   import Frontend.Frontend
-  import Middleend
+  import Backend.EmitLLVM
+  import Backend.Backend
 
   main :: IO ()
   main = getArgs >>= handle
@@ -29,10 +29,8 @@ module Main where
       rawSystem "rm" ["tmp.bc"]
 
   compile :: String -> IO String
-  compile input = case pProgram $ myLexer input of
-    Bad e -> return $ show e
-    Ok a -> do
-      x <- checkProgram a
+  compile input = do
+      x <- checkProgram input
       case x of
-        Left e -> return $ show e
-        Right _ -> return $ "OK\n" --fmap emit (transProgram a)
+        Left e -> putStr (show e) >> exitWith (ExitFailure 1)
+        Right program -> fmap emit (transProgram program)
