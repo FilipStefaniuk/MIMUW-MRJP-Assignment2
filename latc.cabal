@@ -26,11 +26,11 @@ library
                        AbsLLVM,
                        ErrM,
                        Frontend.Frontend,
-                       Frontend.Error
+                       Frontend.CompilerError
                        Frontend.Types
                        Backend.Backend,
                        Backend.EmitLLVM
-  build-depends:       base >=4.9 && <4.10,
+  build-depends:       base,
                        mtl,
                        containers,
                        transformers,
@@ -45,7 +45,7 @@ executable latc
   main-is:             Main.hs
   -- other-modules:       
   -- other-extensions:    
-  build-depends:       base >=4.9 && <4.10,
+  build-depends:       base,
                        latc,
                        process,
                        filepath

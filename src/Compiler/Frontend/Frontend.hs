@@ -5,7 +5,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 import Control.Monad.State
-import Control.Monad.Except
+import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Cont
 
@@ -15,7 +15,7 @@ import ParLatte
 import ErrM
 
 import Frontend.Types
-import Frontend.Error
+import Frontend.CompilerError
 
 data Variable = Var {
     varDepth :: Integer,
@@ -67,11 +67,10 @@ builtins = [
     (Fun (Ident "readInt") TInt []),
     (Fun (Ident "readString") TStr [])]
 
-
 --------------------------------------------------------------------------------------------------
 
-checkProgram :: String -> IO (Either Error (Program Loc))
-checkProgram input = runExceptT $ do
+checkProgram :: String -> IO (Either CompilerError (Program Loc))
+checkProgram input = runErrorT $ do
     program <- parseProgram input
     env <- collectTopDefs program
     typeCheckProgram program env
@@ -79,25 +78,25 @@ checkProgram input = runExceptT $ do
 
 ----- Parse program -------------------------------------------------------------------------------
 
-parseProgram :: String -> ExceptT Error IO (Program Loc)
+parseProgram :: String -> ErrorT CompilerError IO (Program Loc)
 parseProgram input = case pProgram $ myLexer input of
-    Bad e -> throwError . Error $ e
+    Bad e -> throwError . CompilerError $ e
     Ok a -> return a
 
 ----- Collect top level definitions ---------------------------------------------------------------
 
-collectTopDefs :: Program Loc -> ExceptT Error IO Env
+collectTopDefs :: Program Loc -> ErrorT CompilerError IO Env
 collectTopDefs (Prog _ topdefs) = do 
     env <- execStateT (mapM_ collectTopDef topdefs) initEnv
     validateMain env
     return env
 
-validateMain :: Env -> ExceptT Error IO ()
+validateMain :: Env -> ErrorT CompilerError IO ()
 validateMain env = case M.lookup funMain $ functions env of
     Nothing -> throwError $ noMainError
     Just (Fun _ type_ args) -> unless (type_ == TInt && null args) $ throwError noMainError
 
-collectTopDef :: TopDef Loc -> StateT Env (ExceptT Error IO) ()
+collectTopDef :: TopDef Loc -> StateT Env (ErrorT CompilerError IO) ()
 collectTopDef (ClassDef nr ident items) = do
     classes <- gets classes
     when (M.member ident classes) . throwError $  multipleClassDeclarationError nr ident
@@ -114,13 +113,13 @@ collectTopDef (TopFunDef nr fundef) = do
     when (M.member ident functions) . throwError $ multipleFunctionDeclarationError nr ident
     modify $ \env -> env {functions = M.insert ident fun functions}
     
-collectClass :: Ident -> Maybe Ident -> [ClassItemDef Loc] -> StateT Env (ExceptT Error IO) ()
+collectClass :: Ident -> Maybe Ident -> [ClassItemDef Loc] -> StateT Env (ErrorT CompilerError IO) ()
 collectClass ident@(Ident str) parent items = do
     class_ <- lift . execStateT (mapM_ collectClassItemDef items) $ Class parent M.empty M.empty
     modify $ \env -> env {classes = M.insert ident class_ $ classes env}
     `catchError` (\err -> throwError $ InClassError str err)
 
-collectClassItemDef :: ClassItemDef Loc -> StateT Class (ExceptT Error IO) ()
+collectClassItemDef :: ClassItemDef Loc -> StateT Class (ErrorT CompilerError IO) ()
 collectClassItemDef (AttrDef nr type_ ident) = do
     fields <- gets fields
     when (M.member ident fields) . throwError $ multipleFieldDeclarationError nr ident
@@ -132,13 +131,13 @@ collectClassItemDef (MethodDef nr fundef) = do
     when (M.member ident methods) . throwError $ multipleMethodDeclarationError nr ident
     modify $ \class_ -> class_ {methods = M.insert ident fun methods}
 
-extractFunction :: FunDef Loc -> (ExceptT Error IO) Function
+extractFunction :: FunDef Loc -> (ErrorT CompilerError IO) Function
 extractFunction fun@(FunDef _ type_ ident@(Ident str) args block) = do 
     types <- evalStateT (mapM extractArg args) S.empty
     return $ Fun ident (ttype type_) types
     `catchError` \err -> throwError $ InFunctionError str err 
 
-extractArg :: Arg Loc -> StateT (S.Set Ident) (ExceptT Error IO) TType
+extractArg :: Arg Loc -> StateT (S.Set Ident) (ErrorT CompilerError IO) TType
 extractArg (Ar nr type_ ident) = do
     args <- get
     when (S.member ident args) . throwError $ multipleArgumentDeclarationError nr ident
@@ -147,10 +146,10 @@ extractArg (Ar nr type_ ident) = do
 
 ----- Type check top level difinitions -------------------------------------------------------------
 
-typeCheckProgram :: Program Loc -> Env -> ExceptT Error IO ()
+typeCheckProgram :: Program Loc -> Env -> ErrorT CompilerError IO ()
 typeCheckProgram (Prog _ topdefs) env = runReaderT (mapM_ typeCheckTopDef topdefs) $ Ctxt 0 Nothing TVoid env
 
-typeCheckTopDef :: TopDef Loc -> ReaderT Context (ExceptT Error IO) ()
+typeCheckTopDef :: TopDef Loc -> ReaderT Context (ErrorT CompilerError IO) ()
 typeCheckTopDef (TopFunDef _ fundef) = typeCheckFunDef fundef
 typeCheckTopDef (ClassExtDef nr ident1 ident2 items) = typeCheckTopDef $ ClassDef nr ident1 items
 typeCheckTopDef (ClassDef _ ident@(Ident str) items) = do
@@ -160,12 +159,12 @@ typeCheckTopDef (ClassDef _ ident@(Ident str) items) = do
     }}) $ mapM_ typeCheckClassItemDef items
     `catchError` \err -> throwError $ InClassError str err
 
-typeCheckClassItemDef :: ClassItemDef Loc -> ReaderT Context (ExceptT Error IO) ()
+typeCheckClassItemDef :: ClassItemDef Loc -> ReaderT Context (ErrorT CompilerError IO) ()
 typeCheckClassItemDef (MethodDef _ fundef) = typeCheckFunDef fundef
 typeCheckClassItemDef (AttrDef nr type_ ident) = 
     when ((ttype type_) == TVoid) . throwError $ voidFieldError nr
 
-typeCheckFunDef :: FunDef Loc -> ReaderT Context (ExceptT Error IO) ()
+typeCheckFunDef :: FunDef Loc -> ReaderT Context (ErrorT CompilerError IO) ()
 typeCheckFunDef (FunDef nr type_ ident@(Ident str) args block) = do
     type_ <- typeCheckType type_
     args <- M.fromList <$> mapM typeCheckArg args
@@ -177,14 +176,14 @@ typeCheckFunDef (FunDef nr type_ ident@(Ident str) args block) = do
     unless (type_ == TVoid || retStm) . throwError $ noReturnStmtError
     `catchError` \err -> throwError $ InFunctionError str err 
     
-typeCheckArg :: Arg Loc -> ReaderT Context (ExceptT Error IO) (Ident, Variable)
+typeCheckArg :: Arg Loc -> ReaderT Context (ErrorT CompilerError IO) (Ident, Variable)
 typeCheckArg (Ar nr type_ ident) = do
     type_ <- typeCheckType type_
     when (type_ == TVoid) . throwError $ voidArgumentError nr
     lvl <- asks level
     return (ident, Var lvl type_)
 
-getClassEnv :: Maybe Ident -> StateT (S.Set Ident) (ReaderT Context (ExceptT Error IO)) Env
+getClassEnv :: Maybe Ident -> StateT (S.Set Ident) (ReaderT Context (ErrorT CompilerError IO)) Env
 getClassEnv Nothing = return $ Env M.empty M.empty M.empty
 getClassEnv (Just ident) = do
     descendants <- get
@@ -202,7 +201,7 @@ getClassEnv (Just ident) = do
                 functions = M.union (functions env') (methods class_)
             }
 
-validateOverride :: Function -> ReaderT Context (ExceptT Error IO) ()
+validateOverride :: Function -> ReaderT Context (ErrorT CompilerError IO) ()
 validateOverride (Fun ident ttype ttypes) = do
     functions <- asks $ functions . env
     case M.lookup ident functions of
@@ -210,14 +209,14 @@ validateOverride (Fun ident ttype ttypes) = do
         (Just (Fun ident2 ttype2 ttypes2)) -> 
             unless (ttype == ttype2 && ttypes == ttypes2) . throwError $ overrideError
 
------Type check Statements ------------------------------------------------------------------------
+----- Type check Statements ------------------------------------------------------------------------
   
-typeCheckBlock :: Block Loc -> ContT () (StateT Bool (ReaderT Context (ExceptT Error IO))) ()
+typeCheckBlock :: Block Loc -> ContT () (StateT Bool (ReaderT Context (ErrorT CompilerError IO))) ()
 typeCheckBlock (Blk _ stmts) = do
     lift . local (\ctxt -> ctxt {level = level ctxt + 1}) $ runContT (mapM_ typeCheckStmt stmts) return
     ContT $ \next -> next ()
 
-typeCheckStmt :: Stmt Loc -> ContT () (StateT Bool (ReaderT Context (ExceptT Error IO))) ()
+typeCheckStmt :: Stmt Loc -> ContT () (StateT Bool (ReaderT Context (ErrorT CompilerError IO))) ()
 typeCheckStmt (BStmt _ block) = typeCheckBlock block
 typeCheckStmt (Empty _) = return ()
   
@@ -287,7 +286,7 @@ typeCheckStmt (SExp _ expr) = lift $ do
     env <- asks env
     lift . void $ typeCheckExpr expr
 
-typeCheckItem :: Item Loc -> StateT Env (ReaderT (TType, Integer) (ReaderT Context (ExceptT Error IO))) ()
+typeCheckItem :: Item Loc -> StateT Env (ReaderT (TType, Integer) (ReaderT Context (ErrorT CompilerError IO))) ()
 typeCheckItem (Init nr ident expr) = do
     env <- get
     type_ <- asks fst
@@ -307,7 +306,7 @@ typeCheckItem (NoInit nr ident) = do
 
 -------------------------------------- Exprs ------------------------------------------------------
 
-typeCheckLVal :: LVal Loc -> ReaderT Context (ExceptT Error IO) TType
+typeCheckLVal :: LVal Loc -> ReaderT Context (ErrorT CompilerError IO) TType
 typeCheckLVal (LVar nr ident) = do
     variables <- asks $ variables . env 
     unless (M.member ident variables) . throwError $ undeclaredIdentifierError nr ident
@@ -337,7 +336,7 @@ typeCheckLVal (LSelf nr) = do
         Nothing -> throwError $ thisOutsideClassError nr
         Just ident -> return $ TObj ident
 
-typeCheckExpr ::  Expr Loc -> ReaderT Context (ExceptT Error IO) TType
+typeCheckExpr ::  Expr Loc -> ReaderT Context (ErrorT CompilerError IO) TType
 typeCheckExpr (ELitTrue _) = return TBool
 
 typeCheckExpr (ELitFalse _) = return TBool
@@ -432,7 +431,7 @@ typeCheckExpr (EOr nr expr1 expr2) = do
     unless (expType1 == TBool && expType2 == TBool) . throwError $ binaryOperatorTypesError nr expType1 expType2 "||"
     return TBool
 
-typeCheckType :: Type Loc -> ReaderT Context (ExceptT Error IO) TType
+typeCheckType :: Type Loc -> ReaderT Context (ErrorT CompilerError IO) TType
 typeCheckType (Void _) = return TVoid
 typeCheckType (Int _) = return TInt 
 typeCheckType (Str _) = return TStr 
@@ -460,7 +459,7 @@ showRelOp (GE _) = ">="
 showRelOp (EQU _) = "=="
 showRelOp (NE _) = "!="
 
-isCompatible :: TType -> TType -> ReaderT Context (ExceptT Error IO) Bool
+isCompatible :: TType -> TType -> ReaderT Context (ErrorT CompilerError IO) Bool
 isCompatible (TObj _) TNull = return True
 isCompatible (TObj ident1) (TObj ident2) = do
     ancestors <- execStateT (getAncestors (Just ident2)) S.empty
@@ -468,7 +467,7 @@ isCompatible (TObj ident1) (TObj ident2) = do
 isCompatible type1 type2 = return $ type1 == type2
 
 
-getAncestors :: (Maybe Ident) -> StateT (S.Set Ident) (ReaderT Context (ExceptT Error IO)) ()
+getAncestors :: (Maybe Ident) -> StateT (S.Set Ident) (ReaderT Context (ErrorT CompilerError IO)) ()
 getAncestors Nothing = return ()
 getAncestors (Just ident) = do
     classes <- asks $ classes . env
