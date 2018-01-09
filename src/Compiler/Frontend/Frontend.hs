@@ -167,7 +167,7 @@ typeCheckClassItemDef (AttrDef nr type_ ident) =
 typeCheckFunDef :: FunDef Loc -> ReaderT Context (ErrorT CompilerError IO) ()
 typeCheckFunDef (FunDef nr type_ ident@(Ident str) args block) = do
     type_ <- typeCheckType type_
-    args <- M.fromList <$> mapM typeCheckArg args
+    args <- fmap M.fromList $ mapM typeCheckArg args
     vars <- asks $ variables . env
     retStm <- local (\ctxt -> ctxt { 
         retType = type_, 
@@ -324,7 +324,7 @@ typeCheckLVal (LAttr nr expr ident) = do
     type_ <- typeCheckExpr expr
     case type_ of
         TObj classIdent -> do
-            variables <- variables <$> evalStateT (getClassEnv $ Just classIdent) S.empty
+            variables <- fmap variables $ evalStateT (getClassEnv $ Just classIdent) S.empty
             case M.lookup ident variables of
                 Nothing -> throwError $ noFieldError nr classIdent ident
                 Just var -> return $ varType var
@@ -359,7 +359,7 @@ typeCheckExpr (ECall nr ident exprs) = do
         Nothing -> throwError $ undeclaredIdentifierError nr ident 
         Just fun -> do
             types <- mapM typeCheckExpr exprs
-            compatibleTypes <- and <$> zipWithM isCompatible (args fun) types
+            compatibleTypes <- fmap and $ zipWithM isCompatible (args fun) types
             unless (compatibleTypes && (length (args fun) == length types)) . throwError $ functionCallError nr ident
             return . ret $ fun
 
@@ -367,12 +367,12 @@ typeCheckExpr (EMetCall nr expr ident exprs) = do
     type_ <- typeCheckExpr expr
     case type_ of
         TObj classIdent -> do
-            functions <- functions <$> evalStateT (getClassEnv $ Just classIdent) S.empty
+            functions <- fmap functions $ evalStateT (getClassEnv $ Just classIdent) S.empty
             case M.lookup ident functions of
                 Nothing -> throwError $ noMethodError nr classIdent ident
                 Just fun -> do
                     types <- mapM typeCheckExpr exprs
-                    compatibleTypes <- and <$> zipWithM isCompatible (args fun) types
+                    compatibleTypes <- fmap and $ zipWithM isCompatible (args fun) types
                     unless (compatibleTypes && (length (args fun) == length types)) . throwError $ methodCallError nr ident
                     return . ret $ fun  
         _ -> throwError $ classTypeError nr
@@ -436,7 +436,7 @@ typeCheckType (Void _) = return TVoid
 typeCheckType (Int _) = return TInt 
 typeCheckType (Str _) = return TStr 
 typeCheckType (Bool _) = return TBool 
-typeCheckType (Arr _ type_) = TArr <$> typeCheckType type_
+typeCheckType (Arr _ type_) = fmap TArr $ typeCheckType type_
 typeCheckType (Obj nr ident) = do
     classes <- asks $ classes . env
     unless (M.member ident classes) . throwError $ unknownTypeName nr ident
