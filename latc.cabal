@@ -26,8 +26,10 @@ library
                        AbsLLVM,
                        ErrM,
                        Frontend.Frontend,
-                       Frontend.CompilerError
-                       Frontend.Types
+                       Frontend.CompilerError,
+                       Frontend.LLVM,
+                       Frontend.Printer,
+                       Frontend.Types,
                        Backend.Backend,
                        Backend.EmitLLVM
   build-depends:       base,
@@ -39,7 +41,7 @@ library
                        ./src/Compiler
   build-tools:         alex, happy
   default-language:    Haskell2010
-  -- ghc-options:         -Wall
+  ghc-options:         -fno-warn-warnings-deprecations
 
 executable latc
   main-is:             Main.hs
@@ -47,6 +49,7 @@ executable latc
   -- other-extensions:    
   build-depends:       base,
                        latc,
+                       mtl,
                        process,
                        filepath
   hs-source-dirs:      src

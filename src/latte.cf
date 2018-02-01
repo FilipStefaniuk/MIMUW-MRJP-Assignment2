@@ -56,6 +56,7 @@ Str.            Type ::= "string" ;
 Bool.           Type ::= "boolean" ;
 Arr.            Type ::= Type "[]" ;
 Obj.            Type ::= Ident ;
+internal Null.  Type ::= "null" ;
 
 -- expressions ---------------------------------------------
 
@@ -65,7 +66,7 @@ ELitInt.        Expr7 ::= Integer ;
 EString.        Expr7 ::= String ;
 ELitTrue.       Expr7 ::= "true" ;
 ELitFalse.      Expr7 ::= "false" ;
-Null.           Expr7 ::= "null" ;
+ENull.          Expr7 ::= "null" ;
 EVar.           Expr7 ::= LVal ;
 ECall.          Expr7 ::= Ident "(" [Expr] ")" ;
 EMetCall.       Expr7 ::= Expr7 "." Ident "(" [Expr] ")" ;
