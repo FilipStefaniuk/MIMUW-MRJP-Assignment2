@@ -4,27 +4,33 @@ import Data.Map as Map
 import Data.Sequence as Seq
 import Data.List as List
 
-newtype UniqueId = UniqueId Integer
+newtype UniqueId = UniqueId String
     deriving (Eq, Ord)
 
-newtype Label = Label Integer
+data Label = Entry | Label UniqueId
     deriving (Eq, Ord)
 
 newtype Ident = Ident String
     deriving (Eq, Ord)
 
+data FunctionAddr = FunctionAddr Ident Type
+    deriving (Eq, Ord)
+
 data Register = Register UniqueId Type 
+    deriving (Eq, Ord)
+
+data Global = GlobalString Integer Type String
     deriving (Eq, Ord)
 
 data Operand 
     = Reg Register 
-    | Global Ident
+    | Glob Global
     | ConstBool Bool
     | ConstInt Integer
     | Null
     deriving (Eq, Ord)
 
-data Type = Size1 | Size8 | Size32 | Ptr Type 
+data Type = Size1 | Size8 | Size32 | Ptr Type | Arr Integer Type | Void
     deriving (Eq, Ord)
 
 data Phi = Phi Register [PhiBranch] 
@@ -53,22 +59,23 @@ data Alloc = Alloc Register
 
 data Instruction
     = InstrBinOp Register Op Operand Operand
-    | InstrCall Register [Operand]
-    | InstrVoidCall [Operand]
+    | InstrCall Register FunctionAddr [Operand]
+    | InstrVoidCall FunctionAddr [Operand]
+    | InstrGetElementPtr Register Operand
     | InstrCmp Register Cond Operand Operand
     | InstrLoad Register Register
     | InstrStore Operand Register
     deriving Eq
 
 data FunctionDef = FunctionDef {
-    _functionType :: Type,
-    _functionName :: Ident,
+    _functionAddr :: FunctionAddr,
     _functionArgs :: Seq.Seq Register,
     _localVars :: Seq.Seq Alloc,
     _blocks :: Map.Map Label Block
 }
 
 data Program = Program {
+    _programStrings :: [Global],
     _functionDefs :: Seq.Seq FunctionDef
 }
 

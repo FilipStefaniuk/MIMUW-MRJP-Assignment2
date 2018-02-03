@@ -1,0 +1,6 @@
+int main () {
+    string s1 = "\"", s2 = "kota.";
+#    s1 = s1 + s2;
+#    printString(s1);
+    return 0;
+}

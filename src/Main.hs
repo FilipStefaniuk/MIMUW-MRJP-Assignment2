@@ -12,11 +12,8 @@ import LexLatte
 import ParLatte
 import ErrM
 
--- import Frontend.CompilerError
 import Frontend.Frontend
 import Frontend.Printer
-import Backend.EmitLLVM
-import Backend.Backend
 
 main :: IO ()
 main = getArgs >>= handle
