@@ -1,6 +1,17 @@
+class A {
+int x;
+int y;
+}
+class C extends A {
+int a;
+int b;
+}
+
+
 int main () {
-    string s1 = "\"", s2 = "kota.";
-#    s1 = s1 + s2;
-#    printString(s1);
+    int [] x = new int [20];
+    int y = 2;
+    x[y] = 20;
+    printInt(x[y]);
     return 0;
 }

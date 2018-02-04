@@ -31,7 +31,7 @@ compileFile inputFilename = let outputFilename = replaceExtension inputFilename 
     rawSystem "rm" ["tmp.bc"]
 
 
-parseProgram :: String -> ErrorT GenMError IO (Program Loc)
+parseProgram :: String -> ErrorT GenMError IO Program
 parseProgram input = case pProgram $ myLexer input of
     Bad e -> throwError . GenMError $ e
     Ok a -> return a

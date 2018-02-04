@@ -5,10 +5,10 @@ import Data.Sequence as Seq
 import Data.List as List
 
 newtype UniqueId = UniqueId String
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Show)
 
-data Label = Entry | Label UniqueId
-    deriving (Eq, Ord)
+data Label = Entry | Label Integer UniqueId
+    deriving (Eq, Ord, Show)
 
 newtype Ident = Ident String
     deriving (Eq, Ord)
@@ -19,7 +19,7 @@ data FunctionAddr = FunctionAddr Ident Type
 data Register = Register UniqueId Type 
     deriving (Eq, Ord)
 
-data Global = GlobalString Integer Type String
+data Global = GlobalString Ident Type String
     deriving (Eq, Ord)
 
 data Operand 
@@ -30,7 +30,7 @@ data Operand
     | Null
     deriving (Eq, Ord)
 
-data Type = Size1 | Size8 | Size32 | Ptr Type | Arr Integer Type | Void
+data Type = Size1 | Size8 | Size32 | Ptr Type | Arr Integer Type | Void | TypeClass UniqueId
     deriving (Eq, Ord)
 
 data Phi = Phi Register [PhiBranch] 
@@ -61,11 +61,15 @@ data Instruction
     = InstrBinOp Register Op Operand Operand
     | InstrCall Register FunctionAddr [Operand]
     | InstrVoidCall FunctionAddr [Operand]
-    | InstrGetElementPtr Register Operand
+    | InstrGetElementPtr Register Operand [(Type, Idx)]
     | InstrCmp Register Cond Operand Operand
+    | InstrBitcast Register Operand
     | InstrLoad Register Register
     | InstrStore Operand Register
     deriving Eq
+
+data Idx = IdxConst Integer | IdxAddr UniqueId
+    deriving (Eq, Show)
 
 data FunctionDef = FunctionDef {
     _functionAddr :: FunctionAddr,
@@ -74,8 +78,14 @@ data FunctionDef = FunctionDef {
     _blocks :: Map.Map Label Block
 }
 
+data ClassDef = ClassDef {
+    _classIdent :: UniqueId,
+    _fieldTypes :: Seq.Seq Type
+}
+
 data Program = Program {
     _programStrings :: [Global],
+    _classDefs :: Seq.Seq ClassDef,
     _functionDefs :: Seq.Seq FunctionDef
 }
 
