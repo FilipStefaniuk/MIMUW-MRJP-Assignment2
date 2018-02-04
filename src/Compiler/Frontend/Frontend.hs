@@ -127,7 +127,7 @@ transProgram (ABS.Prog topdefs) = runContT (forM_ topdefs collectTopDef) (\_ -> 
                 Nothing -> return 0
                 Just ident -> return 1
             class_ <- lift $ execStateT (forM_ items collectClassItem) Class {
-                _classAddr = UniqueId (".class." ++ str),
+                _classAddr = UniqueId ("class." ++ str),
                 _fieldsCount = firstField,
                 _className = ident,
                 _classParent = parent,
@@ -144,11 +144,12 @@ transProgram (ABS.Prog topdefs) = runContT (forM_ topdefs collectTopDef) (\_ -> 
     collectFunDef :: GenM m => ABS.FunDef -> ContT () m ()
     collectFunDef fun@(ABS.FunDef type_ ident@(ABS.Ident str) args block) = (lift . asks $ (Map.lookup ident) . _functions) >>= \case
         Just fun -> lift . throwError $ GenMError "error"
-        Nothing -> ContT $ \next -> local (\env -> env{
-            _functions = Map.insert ident Function{
+        Nothing -> ContT $ \next -> do
+            ty <- transType type_
+            local (\env -> env{_functions = Map.insert ident Function{
                 _functionType = type_,
                 _functionArguments = map (\(ABS.Ar type_ _) -> type_) args,
-                _functionAddress = FunctionAddr (Ident str) (transType type_)
+                _functionAddress = FunctionAddr (Ident str) ty
             } $ _functions env}) $ next ()
 
     addStrings :: GenM m => m()
@@ -187,7 +188,9 @@ transClassDef ident parent items = do
                 Just class_ -> checkInheritence (_classParent class_)
     
     transClassItem :: GenM m => ABS.ClassItemDef -> m ()
-    transClassItem (ABS.AttrDef type_ ident) = modify (\s -> s{_fields = (transType type_) Seq.<| _fields s})
+    transClassItem (ABS.AttrDef type_ ident) = do
+        ty <- transType type_
+        modify (\s -> s{_fields = ty Seq.<| _fields s})
 
     emitClassDef :: GenM m => UniqueId -> Seq.Seq Type -> m ()
     emitClassDef ident fields = modify $ \s -> s {
@@ -213,8 +216,9 @@ transFunDef fun@(ABS.FunDef type_ (ABS.Ident str) args block) = do
     arguments <- gets _arguments
     vars <- gets _localVariables
     blocks <- gets _currentBlocks
+    ty <- transType type_
     emitFunction $ FunctionDef {
-        _functionAddr = FunctionAddr (Ident str) (transType type_),
+        _functionAddr = FunctionAddr (Ident str) ty,
         _functionArgs = arguments,
         _localVars = vars,
         _blocks = blocks
@@ -226,8 +230,9 @@ transFunDef fun@(ABS.FunDef type_ (ABS.Ident str) args block) = do
         True -> lift . throwError $ GenMError "error"
         False -> ContT $ \next -> do
             modify $ \s -> s{_usedIdentifiers = Set.insert str (_usedIdentifiers s)}
-            reg' <- return $ Register (UniqueId str) (transType type_)
-            reg <- flip Register (Ptr (transType type_)) <$> getNextUniqueId
+            ty <- transType type_
+            reg' <- return $ Register (UniqueId str) ty
+            reg <- flip Register (Ptr ty) <$> getNextUniqueId
             emitAlloc reg
             emitInstr $ InstrStore (Reg reg') reg
             modify $ \s -> s{_arguments = reg' Seq.<| _arguments s}
@@ -376,16 +381,21 @@ transItem type_ (ABS.NoInit ident) = transItem type_ (ABS.Init ident (defaultIni
     defaultInit ABS.Int = ABS.ELitInt 0
     defaultInit ABS.Bool = ABS.ELitFalse
     defaultInit ABS.Str = ABS.EString ""
+    defaultInit _ = ABS.ENull
 
 transItem type_ (ABS.Init ident@(ABS.Ident str) expr) = do
-    (type1, operand) <- lift $ transExpr expr
     (lift $ asks (Set.member ident . _blockVariables)) >>= \case
         True -> lift . throwError $ GenMError "error"
         False -> ContT $ \next -> do
             uniqueId <- getVarName ident
-            reg <- return $ Register uniqueId (Ptr $ transType type_)
+            ty <- transType type_
+            reg <- return $ Register uniqueId (Ptr ty)
             emitAlloc reg
-            emitInstr $ InstrStore operand reg
+            case expr of 
+                ABS.ENull -> return ()
+                expr -> do
+                    (type1, operand) <- transExpr expr
+                    emitInstr $ InstrStore operand reg
             local (\env -> env{
                 _blockVariables = Set.insert ident $ _blockVariables env,
                 _variables = Map.insert ident (Variable type_ reg) $ _variables env
@@ -393,13 +403,16 @@ transItem type_ (ABS.Init ident@(ABS.Ident str) expr) = do
 
 
 
-transType :: ABS.Type -> Type
-transType ABS.Bool  = Size1
-transType ABS.Int  = Size32
-transType ABS.Str  = Ptr Size8
-transType (ABS.Arr type_) = Ptr (transType type_)
-transType ABS.Void = Void
--- Obj _ ident -> failure x
+transType :: GenM m => ABS.Type -> m Type
+transType ABS.Bool  = return Size1
+transType ABS.Int  = return Size32
+transType ABS.Str  = return $ Ptr Size8
+transType (ABS.Arr type_) = Ptr <$> transType type_
+transType ABS.Void = return Void
+transType (ABS.Obj ident) = (asks $ (Map.lookup ident) . _classes) >>= \case
+    Nothing -> throwError $ GenMError "error"
+    Just class_ -> return . Ptr . TypeClass $ _classAddr class_
+
 -- Null _ -> failure x
 
 transExprRequireType :: GenM m => ABS.Type -> ABS.Expr -> m Operand
@@ -450,19 +463,49 @@ transExpr (ABS.ECall ident exprs) = (asks $ (Map.lookup ident) . _functions) >>=
                 emitInstr $ InstrVoidCall funAddr (map snd exprs)
                 return (type_, Null)
             type_ -> do
-                reg <- flip Register (transType type_) <$> getNextUniqueId
+                ty <- transType type_
+                reg <- flip Register ty <$> getNextUniqueId
                 emitInstr $ InstrCall reg funAddr (map snd exprs)
                 return (type_, Reg reg)
 
 --   EMetCall _ expr ident exprs -> failure x
---   ENewObj _ ident -> failure x
+
+transExpr (ABS.ENewObj ident) = do
+    size <- computeClassSize (Just ident)
+    clsAddr <- asks $ _classAddr . (Map.! ident) . _classes
+    fun <- asks $ _functionAddress . (Map.! (ABS.Ident "malloc")) . _functions
+    reg <- flip Register (Ptr Size8) <$> getNextUniqueId
+    reg' <- flip Register (Ptr $ TypeClass clsAddr) <$> getNextUniqueId
+    emitInstr $ InstrCall reg fun [ConstInt size]
+    emitInstr $ InstrBitcast reg' (Reg reg)
+    return (ABS.Obj ident, Reg reg')
+
+  where
+    computeClassSize :: GenM m => Maybe ABS.Ident -> m Integer
+    computeClassSize Nothing = return 0
+    computeClassSize (Just ident) = asks ((Map.lookup ident) . _classes) >>= \case
+        Nothing -> throwError $ GenMError "error"
+        Just class_ -> do
+            size <- computeClassSize . _classParent $ class_
+            return $ Map.foldr (accumFieldSize) size (_classFields class_)
+
+    accumFieldSize :: (ABS.Type, Integer) -> Integer -> Integer
+    accumFieldSize (type_, _) int = int + (getSize type_)
+    
+    getSize :: ABS.Type -> Integer
+    getSize ABS.Int = 4
+    getSize ABS.Bool = 1
+    getSize ABS.Str = 8
+    getSize (ABS.Arr _) = 8
+    getSize (ABS.Obj _) = 8
 
 transExpr (ABS.ENewArr type_ expr) = do
     operand <- transExprRequireType (ABS.Int) expr
     fun <- asks $ _functionAddress . (Map.! (ABS.Ident "malloc")) . _functions
     reg1 <- flip Register Size32 <$> getNextUniqueId
     reg2 <- flip Register (Ptr Size8) <$> getNextUniqueId
-    reg3 <- flip Register (Ptr (transType type_)) <$> getNextUniqueId
+    ty <- transType type_
+    reg3 <- flip Register (Ptr ty) <$> getNextUniqueId
     emitInstr $ InstrBinOp reg1 Times operand (ConstInt (getSize type_))
     emitInstr $ InstrCall reg2 fun [Reg reg1]
     emitInstr $ InstrBitcast reg3 (Reg reg2)
@@ -600,12 +643,36 @@ transLVal (ABS.LArr expr1 expr2) = do
         (Reg (Register id _)) -> return $ IdxAddr id
     case type_ of
         ABS.Arr type_ -> do
-            reg <- flip Register (Ptr $ transType type_) <$> getNextUniqueId
+            ty <- transType type_
+            reg <- flip Register (Ptr ty) <$> getNextUniqueId
             emitInstr $ InstrGetElementPtr reg operand1 [(Size32, idx)]
             return (type_ , reg)
         _ -> throwError $ GenMError "error"
 
---   LAttr _ expr ident -> failure x
+transLVal (ABS.LAttr expr ident) = do
+    (type_, operand) <- transExpr expr
+    case type_ of 
+        ABS.Obj classIdent -> do
+            class_ <- getClassByField (Just classIdent) ident
+            operand <- if _className class_ == classIdent then
+                    return operand
+                else do
+                    reg <- flip Register (Ptr . TypeClass . _classAddr $ class_) <$> getNextUniqueId
+                    emitInstr $ InstrBitcast reg operand
+                    return $ Reg reg
+            (type_, nr) <- return . (Map.! ident) . _classFields $ class_
+            ty <- transType type_
+            reg <- flip Register (Ptr ty) <$> getNextUniqueId
+            emitInstr $ InstrGetElementPtr reg operand [(Size32, IdxConst 0), (Size32, IdxConst nr)]
+            return (type_, reg)
+  where
+    getClassByField :: GenM m => Maybe ABS.Ident -> ABS.Ident -> m Class
+    getClassByField Nothing _ = throwError $ GenMError "error"
+    getClassByField (Just classIdent) fieldIdent = asks ((Map.lookup classIdent) . _classes) >>= \case
+        Nothing -> throwError $ GenMError "error"
+        Just class_ -> if (Map.member fieldIdent) . _classFields $ class_ then return class_ 
+            else getClassByField (_classParent class_) fieldIdent 
+
 --   LSelf _ -> failure x
 
 
@@ -662,476 +729,3 @@ emitEnd end = isReachable >>= flip when (do
         (gets $ _blockEnd . (Map.! label) . _currentBlocks) >>= \case
             BlockEndNone -> return True
             _ -> return False
-
-
-
-
-
-
--- ---- Constants ------------------------------------------------------------------------------------
-
--- initEnv :: Env
--- initEnv = Env {
---     variables = M.empty,
---     classes = M.empty,
---     functions = M.fromList [(ident, f) | f@(Fun ident _ _) <- builtins]
--- }
-
--- funMain :: Ident
--- funMain = Ident "main"
-
--- builtins :: [Function]
--- builtins = [
---     (Fun (Ident "printInt") TVoid [TInt]),
---     (Fun (Ident "printString") TVoid [TStr]),
---     (Fun (Ident "error") TVoid []),
---     (Fun (Ident "readInt") TInt []),
---     (Fun (Ident "readString") TStr [])]
-
--- --------------------------------------------------------------------------------------------------
-
--- checkProgram :: String -> IO (Either CompilerError (Program Loc))
--- checkProgram input = runErrorT $ do
---     program <- parseProgram input
---     -- env <- collectTopDefs program
---     -- typeCheckProgram program env
---     return program
-
--- -- ----- Parse program -------------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
--- ----- Collect top level definitions ---------------------------------------------------------------
-
--- collectTopDefs :: Program -> ErrorT CompilerError IO Env
--- collectTopDefs (Prog _ topdefs) = do 
---     env <- execStateT (mapM_ collectTopDef topdefs) initEnv
---     validateMain env
---     return env
-
--- validateMain :: Env -> ErrorT CompilerError IO ()
--- validateMain env = case M.lookup funMain $ functions env of
---     Nothing -> throwError $ noMainError
---     Just (Fun _ type_ args) -> unless (type_ == TInt && null args) $ throwError noMainError
-
--- collectTopDef :: TopDef -> StateT Env (ErrorT CompilerError IO) ()
--- collectTopDef (ClassDef nr ident items) = do
---     classes <- gets classes
---     when (M.member ident classes) . throwError $  multipleClassDeclarationError nr ident
---     collectClass ident Nothing items
-
--- collectTopDef (ClassExtDef nr ident1 ident2 items) = do 
---     classes <- gets classes
---     when (M.member ident1 classes) . throwError $ multipleClassDeclarationError nr ident1
---     collectClass ident1 (Just ident2) items
-
--- collectTopDef (TopFunDef nr fundef) = do
---     functions <- gets functions
---     fun@(Fun ident _ _) <- lift $ extractFunction fundef
---     when (M.member ident functions) . throwError $ multipleFunctionDeclarationError nr ident
---     modify $ \env -> env {functions = M.insert ident fun functions}
-    
--- collectClass :: Ident -> Maybe Ident -> [ClassItemDef Loc] -> StateT Env (ErrorT CompilerError IO) ()
--- collectClass ident@(Ident str) parent items = do
---     class_ <- lift . execStateT (mapM_ collectClassItemDef items) $ Class parent M.empty M.empty
---     modify $ \env -> env {classes = M.insert ident class_ $ classes env}
---     `catchError` (\err -> throwError $ InClassError str err)
-
--- collectClassItemDef :: ClassItemDef -> StateT Class (ErrorT CompilerError IO) ()
--- collectClassItemDef (AttrDef nr type_ ident) = do
---     fields <- gets fields
---     when (M.member ident fields) . throwError $ multipleFieldDeclarationError nr ident
---     modify $ \class_ -> class_ {fields = M.insert ident (ttype type_) fields}
-
--- collectClassItemDef (MethodDef nr fundef) = do
---     methods <- gets methods
---     fun@(Fun ident@(Ident str) _ _) <- lift $ extractFunction fundef
---     when (M.member ident methods) . throwError $ multipleMethodDeclarationError nr ident
---     modify $ \class_ -> class_ {methods = M.insert ident fun methods}
-
--- extractFunction :: FunDef -> (ErrorT CompilerError IO) Function
--- extractFunction fun@(FunDef _ type_ ident@(Ident str) args block) = do 
---     types <- evalStateT (mapM extractArg args) S.empty
---     return $ Fun ident (ttype type_) types
---     `catchError` \err -> throwError $ InFunctionError str err 
-
--- extractArg :: Arg -> StateT (S.Set Ident) (ErrorT CompilerError IO) TType
--- extractArg (Ar nr type_ ident) = do
---     args <- get
---     when (S.member ident args) . throwError $ multipleArgumentDeclarationError nr ident
---     modify $ S.insert ident
---     return $ ttype type_
-
--- ----- Type check top level difinitions -------------------------------------------------------------
-
--- typeCheckProgram :: Program -> Env -> ErrorT CompilerError IO ()
--- typeCheckProgram (Prog _ topdefs) env = runReaderT (mapM_ typeCheckTopDef topdefs) $ Ctxt 0 Nothing TVoid env
-
--- typeCheckTopDef :: TopDef -> ReaderT Context (ErrorT CompilerError IO) ()
--- typeCheckTopDef (TopFunDef _ fundef) = typeCheckFunDef fundef
--- typeCheckTopDef (ClassExtDef nr ident1 ident2 items) = typeCheckTopDef $ ClassDef nr ident1 items
--- typeCheckTopDef (ClassDef _ ident@(Ident str) items) = do
---     env' <- evalStateT (getClassEnv $ Just ident) S.empty
---     local (\ctxt -> ctxt { level = level ctxt + 1, env = env' {
---       functions = M.union (functions . env $ ctxt) $ functions env'
---     }}) $ mapM_ typeCheckClassItemDef items
---     `catchError` \err -> throwError $ InClassError str err
-
--- typeCheckClassItemDef :: ClassItemDef -> ReaderT Context (ErrorT CompilerError IO) ()
--- typeCheckClassItemDef (MethodDef _ fundef) = typeCheckFunDef fundef
--- typeCheckClassItemDef (AttrDef nr type_ ident) = 
---     when ((ttype type_) == TVoid) . throwError $ voidFieldError nr
-
--- typeCheckFunDef :: FunDef -> ReaderT Context (ErrorT CompilerError IO) ()
--- typeCheckFunDef (FunDef nr type_ ident@(Ident str) args block) = do
---     type_ <- typeCheckType type_
---     args <- fmap M.fromList $ mapM typeCheckArg args
---     vars <- asks $ variables . env
---     retStm <- local (\ctxt -> ctxt { 
---         retType = type_, 
---         env = (env ctxt) {variables = M.union vars args }}) 
---         $ execStateT (runContT (typeCheckBlock block) return) False
---     unless (type_ == TVoid || retStm) . throwError $ noReturnStmtError
---     `catchError` \err -> throwError $ InFunctionError str err 
-    
--- typeCheckArg :: Arg -> ReaderT Context (ErrorT CompilerError IO) (Ident, Variable)
--- typeCheckArg (Ar nr type_ ident) = do
---     type_ <- typeCheckType type_
---     when (type_ == TVoid) . throwError $ voidArgumentError nr
---     lvl <- asks level
---     return (ident, Var lvl type_)
-
--- getClassEnv :: Maybe Ident -> StateT (S.Set Ident) (ReaderT Context (ErrorT CompilerError IO)) Env
--- getClassEnv Nothing = return $ Env M.empty M.empty M.empty
--- getClassEnv (Just ident) = do
---     descendants <- get
---     when (S.member ident descendants) . throwError $ inheritenceCycleError
---     class_ <- asks $ (M.lookup ident . classes) . env 
---     case class_ of
---         Nothing -> throwError $ noAncestorClassError ident
---         Just class_ -> do
---             modify $ S.insert ident
---             env' <- getClassEnv . parent $ class_
---             lift . local (\ctxt -> ctxt{env = env'}) . mapM_ validateOverride . M.elems $ methods class_
---             lvl <- asks $ level
---             return env' {
---                 variables = M.union (variables env') $ M.map (Var lvl) (fields class_),
---                 functions = M.union (functions env') (methods class_)
---             }
-
--- validateOverride :: Function -> ReaderT Context (ErrorT CompilerError IO) ()
--- validateOverride (Fun ident ttype ttypes) = do
---     functions <- asks $ functions . env
---     case M.lookup ident functions of
---         Nothing -> return ()
---         (Just (Fun ident2 ttype2 ttypes2)) -> 
---             unless (ttype == ttype2 && ttypes == ttypes2) . throwError $ overrideError
-
--- ----- Type check Statements ------------------------------------------------------------------------
-  
--- typeCheckBlock :: Block -> ContT () (StateT Bool (ReaderT Context (ErrorT CompilerError IO))) ()
--- typeCheckBlock (Blk _ stmts) = do
---     lift . local (\ctxt -> ctxt {level = level ctxt + 1}) $ runContT (mapM_ typeCheckStmt stmts) return
---     ContT $ \next -> next ()
-
--- typeCheckStmt :: Stmt -> ContT () (StateT Bool (ReaderT Context (ErrorT CompilerError IO))) ()
--- typeCheckStmt (BStmt _ block) = typeCheckBlock block
--- typeCheckStmt (Empty _) = return ()
-  
--- typeCheckStmt (Ret nr expr) = lift $ do
---     env <- asks env
---     retType <- asks retType
---     exprType <- lift $ typeCheckExpr expr
---     compatibleTypes <- lift $ isCompatible retType exprType
---     unless (compatibleTypes) . throwError $ wrongReturnTypeError nr retType exprType
---     modify $ const True
-  
--- typeCheckStmt (VRet nr) = lift $ do
---     retType <- asks retType
---     unless (retType == TVoid) . throwError $ voidRetInNonVoidError
---     modify $ const True
-
--- typeCheckStmt (Ass nr lval expr) = lift $ do
---     env <- asks env
---     lvalType <- lift $ typeCheckLVal lval
---     exprType <- lift $ typeCheckExpr expr
---     compatibleTypes <- lift $ isCompatible lvalType exprType
---     unless (compatibleTypes) . throwError $ wrongTypesError nr lvalType exprType
-
--- typeCheckStmt (Decl _ type_ items) = do
---     lvl <- asks level
---     env <- asks env
---     type_ <- lift . lift $ typeCheckType type_ 
---     env' <- lift . lift $ runReaderT (execStateT (mapM_ typeCheckItem items) env) (type_, lvl)
---     ContT $ \next -> local (\ctxt -> ctxt{env = env'}) $ next ()
-
--- typeCheckStmt (Cond nr expr stmt) = typeCheckStmt (CondElse nr expr stmt (Empty Nothing))      
--- typeCheckStmt (CondElse nr expr stmt1 stmt2) = lift $ do
---     env <- asks env
---     exprType <- lift $ typeCheckExpr expr
---     unless (exprType == TBool) . throwError $ wrongCondExprType nr
---     retStm1 <- lift . local (\ctxt -> ctxt {level = level ctxt + 1}) $ execStateT (runContT (typeCheckStmt stmt1) return) False
---     retStm2 <- lift . local (\ctxt -> ctxt {level = level ctxt + 1}) $ execStateT (runContT (typeCheckStmt stmt2) return) False
---     modify $ \ret -> ret || retStm1 && retStm2
-
--- typeCheckStmt (While nr expr stmt) = lift $ do
---     env <- asks env
---     exprType <- lift $ typeCheckExpr expr
---     unless (exprType == TBool) . throwError $ wrongCondExprType nr
---     local (\ctxt -> ctxt {level = level ctxt + 1}) $ runContT (typeCheckStmt stmt) return
-
--- typeCheckStmt (Decr nr lval) = typeCheckStmt (Incr nr lval)
--- typeCheckStmt (Incr nr lval) = lift $ do
---     env <- asks env
---     type_ <- lift $ typeCheckLVal lval
---     unless (type_ == TInt) . throwError $ incrDecrError nr
-
--- typeCheckStmt (For nr type_ ident expr stmt) = lift $ do
---     lvl <- asks level
---     env <- asks env
---     type_ <- lift $ typeCheckType type_
---     expType <- lift $ typeCheckExpr expr
---     case getArrElementType expType of
---         Nothing -> throwError $ iterationError nr expType
---         Just arrElType -> do
---             compatibleTypes <- lift $ isCompatible type_ arrElType
---             unless (compatibleTypes) . throwError $ wrongTypesError nr type_ arrElType
---             ctxt' <- asks $ \ctxt -> ctxt{level = lvl + 2, env = env{variables = M.insert ident (Var (lvl + 1) type_) $ variables env}}
---             retStm <- lift . local (const ctxt') $ execStateT (runContT (typeCheckStmt stmt) return) False
---             modify $ \ret -> ret || retStm
-
--- typeCheckStmt (SExp _ expr) = lift $ do
---     env <- asks env
---     lift . void $ typeCheckExpr expr
-
--- typeCheckItem :: Item -> StateT Env (ReaderT (TType, Integer) (ReaderT Context (ErrorT CompilerError IO))) ()
--- typeCheckItem (Init nr ident expr) = do
---     env <- get
---     type_ <- asks fst
---     exprType <- lift . lift $ typeCheckExpr expr
---     compatibleTypes <- lift . lift $ isCompatible type_ exprType
---     lift . unless (compatibleTypes) . throwError $ wrongTypesError nr type_ exprType
---     typeCheckItem (NoInit nr ident)
-
--- typeCheckItem (NoInit nr ident) = do
---     (type_, lvl) <- ask
---     var <- gets $ M.lookup ident . variables
---     case var of
---         Just var -> when (varDepth var == lvl) . throwError $ variableRedefinitionError nr ident
---         Nothing -> return ()
---     modify $ \env -> env {variables = M.insert ident (Var lvl type_) $ variables env}
-  
-
--- -------------------------------------- Exprs ------------------------------------------------------
-
--- typeCheckLVal :: LVal -> ReaderT Context (ErrorT CompilerError IO) TType
--- typeCheckLVal (LVar nr ident) = do
---     variables <- asks $ variables . env 
---     unless (M.member ident variables) . throwError $ undeclaredIdentifierError nr ident
---     return . varType $ (variables M.! ident)
-
--- typeCheckLVal (LArr nr expr1 expr2) = do
---     exprType1 <- typeCheckExpr expr1
---     exprType2 <- typeCheckExpr expr2
---     unless (exprType2 == TInt) . throwError $ arrayIndexTypeError nr
---     case getArrElementType exprType2 of
---         Nothing -> throwError $ arrayTypeRequiredError nr
---         Just type_ -> return type_
-
--- typeCheckLVal (LAttr nr expr ident) = do
---     type_ <- typeCheckExpr expr
---     case type_ of
---         TObj classIdent -> do
---             variables <- fmap variables $ evalStateT (getClassEnv $ Just classIdent) S.empty
---             case M.lookup ident variables of
---                 Nothing -> throwError $ noFieldError nr classIdent ident
---                 Just var -> return $ varType var
---         _ -> throwError $ classTypeError nr
-
--- typeCheckLVal (LSelf nr) = do
---     self <- asks self
---     case self of
---         Nothing -> throwError $ thisOutsideClassError nr
---         Just ident -> return $ TObj ident
-
--- typeCheckExpr ::  Expr -> ReaderT Context (ErrorT CompilerError IO) TType
--- typeCheckExpr (ELitTrue _) = return TBool
-
--- typeCheckExpr (ELitFalse _) = return TBool
-
--- typeCheckExpr (EString _ string) = return TStr
-
--- typeCheckExpr (ELitInt _ integer) = return TInt
-
--- typeCheckExpr (Null _) = return TNull
-
--- typeCheckExpr (EVar _ lval) = typeCheckLVal lval
-
--- typeCheckExpr (ENewObj nr ident) = do
---     type_ <- typeCheckType $ Obj nr ident
---     return $ type_
-
--- typeCheckExpr (ECall nr ident exprs) = do
---     functions <- asks $ functions . env
---     case M.lookup ident functions of
---         Nothing -> throwError $ undeclaredIdentifierError nr ident 
---         Just fun -> do
---             types <- mapM typeCheckExpr exprs
---             compatibleTypes <- fmap and $ zipWithM isCompatible (args fun) types
---             unless (compatibleTypes && (length (args fun) == length types)) . throwError $ functionCallError nr ident
---             return . ret $ fun
-
--- typeCheckExpr (EMetCall nr expr ident exprs) = do
---     type_ <- typeCheckExpr expr
---     case type_ of
---         TObj classIdent -> do
---             functions <- fmap functions $ evalStateT (getClassEnv $ Just classIdent) S.empty
---             case M.lookup ident functions of
---                 Nothing -> throwError $ noMethodError nr classIdent ident
---                 Just fun -> do
---                     types <- mapM typeCheckExpr exprs
---                     compatibleTypes <- fmap and $ zipWithM isCompatible (args fun) types
---                     unless (compatibleTypes && (length (args fun) == length types)) . throwError $ methodCallError nr ident
---                     return . ret $ fun  
---         _ -> throwError $ classTypeError nr
-
--- typeCheckExpr (ENewArr nr type_ expr) = do
---     type_ <- typeCheckType type_
---     expType <- typeCheckExpr expr
---     unless (expType == TInt) . throwError $ arrayLengthTypeError nr
---     return $ TArr type_
-
--- typeCheckExpr (Neg nr expr) = do
---     expType <- typeCheckExpr expr
---     unless (expType == TInt) . throwError $ unaryOperatorTypeError nr expType "-"
---     return TInt
-
--- typeCheckExpr (Not nr expr) = do
---     expType <- typeCheckExpr expr
---     unless (expType == TBool) . throwError $ unaryOperatorTypeError nr expType "!"
---     return TBool
-
--- typeCheckExpr (EMul nr expr1 mulop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == TInt && expType2 == TInt) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showMulOp mulop)
---     return TInt
-
--- typeCheckExpr (EAdd nr expr1 addop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == TInt && expType2 == TInt) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showAddOp addop)
---     return TInt
-  
--- typeCheckExpr (ERel nr expr1 relop expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (compare relop expType1 expType2) . throwError $ binaryOperatorTypesError nr expType1 expType2 (showRelOp relop)
---     return TBool
---     where
---         compare _ TVoid _ = False
---         compare _ _ TVoid = False
---         compare _ TInt TInt = True
---         compare _ TBool TBool = True
---         compare (EQU _) a b = a == b
---         compare (NE _) a b = a == b
---         compare _ _ _ = False 
-
--- typeCheckExpr (EAnd nr expr1 expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == TBool && expType2 == TBool) . throwError $ binaryOperatorTypesError nr expType1 expType2 "&&"
---     return TBool
-
--- typeCheckExpr (EOr nr expr1 expr2) = do
---     expType1 <- typeCheckExpr expr1
---     expType2 <- typeCheckExpr expr2
---     unless (expType1 == TBool && expType2 == TBool) . throwError $ binaryOperatorTypesError nr expType1 expType2 "||"
---     return TBool
-
--- typeCheckType :: Type -> ReaderT Context (ErrorT CompilerError IO) TType
--- typeCheckType (Void _) = return TVoid
--- typeCheckType (Int _) = return TInt 
--- typeCheckType (Str _) = return TStr 
--- typeCheckType (Bool _) = return TBool 
--- typeCheckType (Arr _ type_) = fmap TArr $ typeCheckType type_
--- typeCheckType (Obj nr ident) = do
---     classes <- asks $ classes . env
---     unless (M.member ident classes) . throwError $ unknownTypeName nr ident
---     return $ TObj ident
-
--- showAddOp :: AddOp a -> String
--- showAddOp (Plus _) = "+"
--- showAddOp (Minus _) = "-"
-
--- showMulOp :: MulOp a -> String
--- showMulOp (Times _) = "*"
--- showMulOp (Div _) = "/"
--- showMulOp (Mod _) = "%"
-
--- showRelOp :: RelOp a -> String
--- showRelOp (LTH _) = "<"
--- showRelOp (LE _) =  "<="
--- showRelOp (GTH _) = ">"
--- showRelOp (GE _) = ">="
--- showRelOp (EQU _) = "=="
--- showRelOp (NE _) = "!="
-
--- isCompatible :: TType -> TType -> ReaderT Context (ErrorT CompilerError IO) Bool
--- isCompatible (TObj _) TNull = return True
--- isCompatible (TObj ident1) (TObj ident2) = do
---     ancestors <- execStateT (getAncestors (Just ident2)) S.empty
---     return $ S.member ident1 ancestors
--- isCompatible type1 type2 = return $ type1 == type2
-
-
--- getAncestors :: (Maybe Ident) -> StateT (S.Set Ident) (ReaderT Context (ErrorT CompilerError IO)) ()
--- getAncestors Nothing = return ()
--- getAncestors (Just ident) = do
---     classes <- asks $ classes . env
---     case M.lookup ident classes of
---         Nothing -> throwError $ unknownClassName ident
---         (Just class_) -> do
---             idents <- get
---             when (S.member ident idents) . throwError $ inheritenceCycleError
---             modify $ S.insert ident
---             getAncestors $ parent class_

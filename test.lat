@@ -9,9 +9,7 @@ int b;
 
 
 int main () {
-    int [] x = new int [20];
-    int y = 2;
-    x[y] = 20;
-    printInt(x[y]);
+    int [] x = new int [10];
+    x[2] = 22;
     return 0;
 }

@@ -5,23 +5,23 @@ declare i32 @readInt()
 declare i8* @readString()
 declare i8* @concat(i8*, i8*)
 declare i8* @malloc(i32)
+%class.A = type { i32, i32 }
+%class.C = type { %class.A, i32, i32 }
+
 
 define i32 @main() {
-	%x = alloca i32*
-	%y = alloca i32
-	%1 = mul i32 20, 4
-	%2 = call i8* @malloc(i32 %1)
-	%3 = bitcast i8* %2 to i32*
-	store i32* %3, i32** %x
-	store i32 2, i32* %y
-	%4 = load i32, i32* %y
-	%5 = load i32*, i32** %x
-	%6 = getelementptr inbounds i32, i32* %5, i32 %4
-	store i32 20, i32* %6
-	%7 = load i32, i32* %y
-	%8 = load i32*, i32** %x
-	%9 = getelementptr inbounds i32, i32* %8, i32 %7
-	%10 = load i32, i32* %9
-	call void @printInt(i32 %10)
+	%a = alloca %class.C*
+	%1 = call i8* @malloc(i32 16)
+	%2 = bitcast i8* %1 to %class.C*
+	store %class.C* %2, %class.C** %a
+	%3 = load %class.C*, %class.C** %a
+	%4 = bitcast %class.C* %3 to %class.A*
+	%5 = getelementptr inbounds %class.A, %class.A* %4, i32 0, i32 0
+	store i32 12, i32* %5
+	%6 = load %class.C*, %class.C** %a
+	%7 = bitcast %class.C* %6 to %class.A*
+	%8 = getelementptr inbounds %class.A, %class.A* %7, i32 0, i32 0
+	%9 = load i32, i32* %8
+	call void @printInt(i32 %9)
 	ret i32 0
 }

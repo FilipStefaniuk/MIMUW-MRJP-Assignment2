@@ -9,7 +9,6 @@ import Data.List
 printProgram :: Program -> String
 printProgram (Program strings classDefs funcDefs) = unlines $ concat [
     printBuiltInFunctions,
-    [""],
     map printClassDef $ toList . Seq.reverse $ classDefs,
     [""],
     map printGlobalDef strings,
@@ -81,7 +80,6 @@ printInstruction (InstrStore op reg) = concat [
     "\tstore ", printOperandType op, " ", printOperand op, ", ", printRegisterType reg, " ", printRegister reg]
 printInstruction (InstrBitcast reg operand) = concat [
     "\t", printRegister reg, " = ", "bitcast ", printOperandType operand, " ", printOperand operand, " to ", printRegisterType reg]
-
 
 printIdx :: Idx -> String
 printIdx (IdxConst int) = show int
