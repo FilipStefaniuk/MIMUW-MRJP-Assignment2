@@ -24,6 +24,7 @@ data Variable = Variable {
 }
 
 data Function = Function {
+    _functionName :: ABS.Ident,
     _functionType :: ABS.Type,
     _functionArguments :: [ABS.Type],
     _functionAddress :: FunctionAddr
@@ -35,7 +36,7 @@ data Class = Class {
     _className :: ABS.Ident,
     _classParent :: Maybe ABS.Ident,
     _classFields :: Map.Map ABS.Ident (ABS.Type, Integer),
-    _classMethods :: Map.Map ABS.Ident (ABS.FunDef)
+    _classMethods :: Map.Map ABS.Ident Function
 }
 
 data GenMState = GenMState {
@@ -102,13 +103,13 @@ gen prog = _program <$> execStateT (runReaderT (transProgram prog) initGenMEnv) 
 
 getBuiltinFunctions :: Map.Map ABS.Ident Function
 getBuiltinFunctions = Map.fromList [
-    (ABS.Ident "printInt", Function ABS.Void [ABS.Int] (FunctionAddr (Ident "printInt") Void)),
-    (ABS.Ident "printString", Function ABS.Void [ABS.Str] (FunctionAddr (Ident "printString") Void)),
-    (ABS.Ident "error", Function ABS.Void [] (FunctionAddr (Ident "error") Void)),
-    (ABS.Ident "readInt", Function ABS.Int [] (FunctionAddr (Ident "readInt") Size32)),
-    (ABS.Ident "readString", Function ABS.Str [] (FunctionAddr (Ident "readString") (Ptr Size8))),
-    (ABS.Ident "concat", Function ABS.Str [ABS.Str, ABS.Str] (FunctionAddr (Ident "concat") (Ptr Size8))),
-    (ABS.Ident "malloc", Function ABS.Str [ABS.Int] (FunctionAddr (Ident "malloc") (Ptr Size8)))
+    (ABS.Ident "printInt", Function (ABS.Ident "printInt") ABS.Void [ABS.Int] (FunctionAddr (Ident "printInt") Void)),
+    (ABS.Ident "printString", Function (ABS.Ident "printString") ABS.Void [ABS.Str] (FunctionAddr (Ident "printString") Void)),
+    (ABS.Ident "error", Function (ABS.Ident "error") ABS.Void [] (FunctionAddr (Ident "error") Void)),
+    (ABS.Ident "readInt", Function (ABS.Ident "readInt") ABS.Int [] (FunctionAddr (Ident "readInt") Size32)),
+    (ABS.Ident "readString", Function (ABS.Ident "readString") ABS.Str [] (FunctionAddr (Ident "readString") (Ptr Size8))),
+    (ABS.Ident "concat", Function (ABS.Ident "concat") ABS.Str [ABS.Str, ABS.Str] (FunctionAddr (Ident "concat") (Ptr Size8))),
+    (ABS.Ident "malloc", Function (ABS.Ident "malloc") ABS.Str [ABS.Int] (FunctionAddr (Ident "malloc") (Ptr Size8)))
     ]
 
 transProgram :: GenM m => ABS.Program -> m ()
@@ -140,6 +141,17 @@ transProgram (ABS.Prog topdefs) = runContT (forM_ topdefs collectTopDef) (\_ -> 
     collectClassItem (ABS.AttrDef type_ ident) = (gets $ (Map.lookup ident) . _classFields) >>= \case
         Just _ -> throwError $ GenMError "error"
         Nothing -> modify $ \s -> s{_classFields = Map.insert ident (type_, _fieldsCount s) $ _classFields s, _fieldsCount = (_fieldsCount s) + 1}
+    collectClassItem (ABS.MethodDef fun@(ABS.FunDef type_ ident@(ABS.Ident str) args block)) = (gets $ (Map.lookup ident) . _classMethods) >>= \case
+        Just _ -> throwError $ GenMError "error"
+        Nothing -> do
+            (ABS.Ident name) <- gets _className
+            ty <- lift $ transType type_
+            modify $ \s -> s{_classMethods = Map.insert ident Function{
+                _functionName = ident,
+                _functionType = type_,
+                _functionArguments = map (\(ABS.Ar type_ _) -> type_) args,
+                _functionAddress = FunctionAddr (Ident (name ++ "." ++ str)) ty
+            } $ _classMethods s}
 
     collectFunDef :: GenM m => ABS.FunDef -> ContT () m ()
     collectFunDef fun@(ABS.FunDef type_ ident@(ABS.Ident str) args block) = (lift . asks $ (Map.lookup ident) . _functions) >>= \case
@@ -147,6 +159,7 @@ transProgram (ABS.Prog topdefs) = runContT (forM_ topdefs collectTopDef) (\_ -> 
         Nothing -> ContT $ \next -> do
             ty <- transType type_
             local (\env -> env{_functions = Map.insert ident Function{
+                _functionName = ident,
                 _functionType = type_,
                 _functionArguments = map (\(ABS.Ar type_ _) -> type_) args,
                 _functionAddress = FunctionAddr (Ident str) ty
@@ -191,6 +204,21 @@ transClassDef ident parent items = do
     transClassItem (ABS.AttrDef type_ ident) = do
         ty <- transType type_
         modify (\s -> s{_fields = ty Seq.<| _fields s})
+    transClassItem (ABS.MethodDef (ABS.FunDef type_ ident args block)) = do
+        Just classIdent <- asks _currentClass
+        class_ <- asks $ (Map.! classIdent) . _classes
+        checkOverride (_classParent class_) ((Map.! ident) . _classMethods $ class_)
+        (FunctionAddr (Ident str) _) <- return $ _functionAddress . (Map.! ident) . _classMethods $ class_
+        transFunDef (ABS.FunDef type_ (ABS.Ident str) ((ABS.Ar (ABS.Obj classIdent) (ABS.Ident "this")):args) block)
+
+    checkOverride :: GenM m => Maybe ABS.Ident -> Function -> m ()
+    checkOverride Nothing _ = return ()
+    checkOverride (Just ident) fun@(Function _ retType argTypes _) = do
+        class_ <- asks $ (Map.! ident) . _classes
+        case (Map.lookup (_functionName fun)) . _classMethods $ class_ of
+            Nothing -> checkOverride (_classParent class_) fun
+            Just (Function _ retType2 argTypes2 _) -> unless (retType == retType2 && argTypes == argTypes2) $ throwError $ GenMError "override error"
+
 
     emitClassDef :: GenM m => UniqueId -> Seq.Seq Type -> m ()
     emitClassDef ident fields = modify $ \s -> s {
@@ -363,7 +391,15 @@ transStmt (ABS.While expr stmt) = lift $ do
             emitEnd $ BlockEndBranchCond operand body end
             modify $ \s -> s{_currentBlockLabel = end}
 
---   For _ type_ ident expr stmt -> failure x
+transStmt (ABS.For type_ ident expr stmt) = transBlock (ABS.Blk [
+    ABS.Decl type_ [(ABS.NoInit ident)],
+    ABS.Decl ABS.Int [(ABS.NoInit (ABS.Ident ".t"))],
+    (ABS.While (ABS.ERel (ABS.EVar (ABS.LVar (ABS.Ident ".t"))) ABS.LTH (ABS.EVar (ABS.LAttr expr (ABS.Ident "length"))))
+    (ABS.BStmt (ABS.Blk [
+        ABS.Ass (ABS.LVar ident) (ABS.EVar (ABS.LArr expr (ABS.EVar (ABS.LVar (ABS.Ident ".t"))))),
+        stmt,
+        ABS.Incr (ABS.LVar (ABS.Ident ".t"))
+    ])))])
 
 isReturn :: GenM m => m Bool
 isReturn = do
@@ -407,13 +443,20 @@ transType :: GenM m => ABS.Type -> m Type
 transType ABS.Bool  = return Size1
 transType ABS.Int  = return Size32
 transType ABS.Str  = return $ Ptr Size8
-transType (ABS.Arr type_) = Ptr <$> transType type_
+transType (ABS.Arr type_) = return $ Ptr Size8
 transType ABS.Void = return Void
 transType (ABS.Obj ident) = (asks $ (Map.lookup ident) . _classes) >>= \case
     Nothing -> throwError $ GenMError "error"
     Just class_ -> return . Ptr . TypeClass $ _classAddr class_
 
 -- Null _ -> failure x
+
+getClassByMethod :: GenM m => Maybe ABS.Ident -> ABS.Ident -> m (Maybe ABS.Ident)
+getClassByMethod Nothing _ = return Nothing
+getClassByMethod (Just classIdent) methodIdent = asks ((Map.lookup classIdent) . _classes) >>= \case
+    Nothing -> return Nothing
+    Just class_ -> if (Map.member methodIdent) . _classMethods $ class_ then return . Just $ _className class_ 
+        else getClassByMethod (_classParent class_) methodIdent 
 
 transExprRequireType :: GenM m => ABS.Type -> ABS.Expr -> m Operand
 transExprRequireType type_ expr = do
@@ -454,21 +497,53 @@ transExpr (ABS.EString string) = do
         | int == 0 = Ident ".str"
         | otherwise = Ident $ ".str." ++ (show int)
 
-transExpr (ABS.ECall ident exprs) = (asks $ (Map.lookup ident) . _functions) >>= \case
-    Nothing -> throwError $ GenMError "error"
-    Just (Function type_ argTypes funAddr) -> do
-        exprs <- mapM transExpr exprs
-        case type_ of
-            ABS.Void -> do
-                emitInstr $ InstrVoidCall funAddr (map snd exprs)
-                return (type_, Null)
-            type_ -> do
-                ty <- transType type_
-                reg <- flip Register ty <$> getNextUniqueId
-                emitInstr $ InstrCall reg funAddr (map snd exprs)
-                return (type_, Reg reg)
+transExpr call@(ABS.ECall ident exprs) = asks (_currentClass) >>= \case 
+    Nothing -> transFunctionCall call
+    justclassIdent -> getClassByMethod justclassIdent ident >>= \case
+        Nothing ->  transFunctionCall call
+        Just classIdent -> transExpr (ABS.EMetCall (ABS.EVar ABS.LSelf) ident exprs)
+  where
+    transFunctionCall :: GenM m => ABS.Expr -> m (ABS.Type, Operand)
+    transFunctionCall (ABS.ECall ident exprs) = (asks $ (Map.lookup ident) . _functions) >>= \case
+        Nothing -> throwError $ GenMError "error"
+        Just (Function _ type_ argTypes funAddr) -> do
+            exprs <- mapM transExpr exprs
+            case type_ of
+                ABS.Void -> do
+                    emitInstr $ InstrVoidCall funAddr (map snd exprs)
+                    return (type_, Null)
+                type_ -> do
+                    ty <- transType type_
+                    reg <- flip Register ty <$> getNextUniqueId
+                    emitInstr $ InstrCall reg funAddr (map snd exprs)
+                    return (type_, Reg reg)
 
---   EMetCall _ expr ident exprs -> failure x
+transExpr (ABS.EMetCall expr ident exprs) = do
+    (type_, operand) <- transExpr expr
+    exprs <- mapM transExpr exprs
+    case type_ of
+        ABS.Obj classIdent -> do 
+            classIdent' <- getClassByMethod (Just classIdent) ident >>= \case
+                Just classIdent -> return classIdent
+                Nothing -> throwError $ GenMError "error"
+            class_ <- asks $ (Map.! classIdent') . _classes 
+            operand <- if classIdent' == classIdent then
+                    return operand
+                else do
+                    reg <- flip Register (Ptr . TypeClass . _classAddr $ class_) <$> getNextUniqueId
+                    emitInstr $ InstrBitcast reg operand
+                    return $ Reg reg
+            let (Function _ retType argTypes funAddr) = (Map.! ident) . _classMethods $ class_ in
+                case retType of
+                    ABS.Void -> do
+                        emitInstr $ InstrVoidCall funAddr (operand:(map snd exprs))
+                        return (retType, Null)
+                    type_ -> do
+                        ty <- transType type_
+                        reg <- flip Register ty <$> getNextUniqueId
+                        emitInstr $ InstrCall reg funAddr (operand:(map snd exprs))
+                        return (type_, Reg reg)
+
 
 transExpr (ABS.ENewObj ident) = do
     size <- computeClassSize (Just ident)
@@ -495,27 +570,30 @@ transExpr (ABS.ENewObj ident) = do
     getSize :: ABS.Type -> Integer
     getSize ABS.Int = 4
     getSize ABS.Bool = 1
-    getSize ABS.Str = 8
-    getSize (ABS.Arr _) = 8
-    getSize (ABS.Obj _) = 8
+    getSize ABS.Str = 1
+    getSize (ABS.Arr _) = 1
+    getSize (ABS.Obj _) = 1
 
 transExpr (ABS.ENewArr type_ expr) = do
     operand <- transExprRequireType (ABS.Int) expr
     fun <- asks $ _functionAddress . (Map.! (ABS.Ident "malloc")) . _functions
     reg1 <- flip Register Size32 <$> getNextUniqueId
-    reg2 <- flip Register (Ptr Size8) <$> getNextUniqueId
-    ty <- transType type_
-    reg3 <- flip Register (Ptr ty) <$> getNextUniqueId
+    reg2 <- flip Register Size32 <$> getNextUniqueId
+    reg3 <- flip Register (Ptr Size8) <$> getNextUniqueId
+    reg4 <- flip Register (Ptr Size32) <$> getNextUniqueId
+    
     emitInstr $ InstrBinOp reg1 Times operand (ConstInt (getSize type_))
-    emitInstr $ InstrCall reg2 fun [Reg reg1]
-    emitInstr $ InstrBitcast reg3 (Reg reg2)
-    return (type_, Reg reg3)
+    emitInstr $ InstrBinOp reg2 Plus (Reg reg1) (ConstInt (getSize ABS.Int))
+    emitInstr $ InstrCall reg3 fun [Reg reg2]
+    emitInstr $ InstrBitcast reg4 (Reg reg3)
+    emitInstr $ InstrStore operand reg4
+    return (ABS.Arr type_, Reg reg3)
   where
     getSize :: ABS.Type -> Integer
     getSize ABS.Int = 4
     getSize ABS.Bool = 1
-    getSize ABS.Str = 8
-    getSize (ABS.Arr _) = 8
+    getSize ABS.Str = 1
+    getSize (ABS.Arr _) = 1
 
 transExpr (ABS.Neg expr) = transExpr $ ABS.EMul expr ABS.Times (ABS.ELitInt (-1))
 transExpr (ABS.Not expr) = transExpr $ ABS.ERel expr ABS.EQU (ABS.ELitFalse)
@@ -632,7 +710,9 @@ transExpr (ABS.EOr expr1 expr2) = do
 
 transLVal :: GenM m => ABS.LVal -> m (ABS.Type, Register)
 transLVal (ABS.LVar ident) = asks (Map.lookup ident . _variables) >>= \case
-    Nothing -> throwError $ GenMError "error"
+    Nothing -> asks _currentClass >>= \case
+        Nothing -> throwError $ GenMError "error"
+        Just _ -> transLVal $ (ABS.LAttr (ABS.EVar ABS.LSelf) ident)
     Just var -> return (_variableType var, _variableAddress var)
 
 transLVal (ABS.LArr expr1 expr2) = do
@@ -644,14 +724,23 @@ transLVal (ABS.LArr expr1 expr2) = do
     case type_ of
         ABS.Arr type_ -> do
             ty <- transType type_
-            reg <- flip Register (Ptr ty) <$> getNextUniqueId
-            emitInstr $ InstrGetElementPtr reg operand1 [(Size32, idx)]
-            return (type_ , reg)
+            reg <- flip Register (Ptr Size8) <$> getNextUniqueId
+            reg2 <- flip Register (Ptr ty) <$> getNextUniqueId
+            reg3 <- flip Register (Ptr ty) <$> getNextUniqueId
+            emitInstr $ InstrGetElementPtr reg operand1 [(Size32, IdxConst 4)]
+            emitInstr $ InstrBitcast reg2 (Reg reg)
+            emitInstr $ InstrGetElementPtr reg3 (Reg reg2) [(Size32, idx)]
+            return (type_ , reg3)
         _ -> throwError $ GenMError "error"
 
 transLVal (ABS.LAttr expr ident) = do
     (type_, operand) <- transExpr expr
-    case type_ of 
+    case type_ of
+        ABS.Arr _ -> do
+            unless (ident == (ABS.Ident "length")) $ throwError $ GenMError "error"
+            reg <- flip Register (Ptr Size32) <$> getNextUniqueId
+            emitInstr $ InstrBitcast reg operand
+            return (ABS.Int, reg)
         ABS.Obj classIdent -> do
             class_ <- getClassByField (Just classIdent) ident
             operand <- if _className class_ == classIdent then
@@ -673,14 +762,11 @@ transLVal (ABS.LAttr expr ident) = do
         Just class_ -> if (Map.member fieldIdent) . _classFields $ class_ then return class_ 
             else getClassByField (_classParent class_) fieldIdent 
 
---   LSelf _ -> failure x
-
-
-
--- transClassItemDef :: Show a => ClassItemDef a -> Result
--- transClassItemDef x = case x of
---     AttrDef _ type_ ident -> failure x
---     MethodDef _ fundef -> failure x
+transLVal ABS.LSelf = (asks _currentClass) >>= \case
+    Nothing -> throwError $ GenMError "error"
+    Just ident -> do
+        ty <- transType (ABS.Obj ident)
+        return (ABS.Obj ident, Register (UniqueId "1") (Ptr ty))
 
 newBlock :: GenM m => m Label
 newBlock = do

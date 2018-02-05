@@ -1,15 +1,25 @@
 class A {
-int x;
-int y;
-}
-class C extends A {
-int a;
-int b;
+	int f() {
+		printInt(10);
+		return 0;
+	}
 }
 
+class B extends A {
+
+int g() {
+	f();
+	return 0;
+}
+}
+
+int f() {
+	printInt(30);
+	return 0;
+}
 
 int main () {
-    int [] x = new int [10];
-    x[2] = 22;
+    B b = new B;
+    b.g();
     return 0;
 }
