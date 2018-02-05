@@ -1,140 +1,28 @@
 module Frontend.Printer where
 
 import Frontend.LLVM
-import Data.Sequence as Seq
-import qualified Data.Map as Map
-import Data.Foldable
 import Data.List
 
 printProgram :: Program -> String
-printProgram (Program strings classDefs funcDefs) = unlines $ concat [
+printProgram (Program classDefs stringDefs funcDefs) = unlines . intercalate [""] $ [
     printBuiltInFunctions,
-    map printClassDef $ toList . Seq.reverse $ classDefs,
-    [""],
-    map printGlobalDef strings,
-    [""],
-    (intercalate [""]) . map printFunctionDef $ toList . Seq.reverse $ funcDefs]
+    map prt classDefs,
+    map prt stringDefs,
+    (intercalate [""]) . map printFuncDef $ funcDefs
+    ]
 
-printGlobalDef :: Global -> String
-printGlobalDef (GlobalString ident type_ str) = concat [printIdent ident, " = constant ", printType type_, " c\"", str, "\\00\""]
+printFuncDef :: FunctionDef -> [String]
+printFuncDef (FunctionDef ty ident args allocs blocks) = (concat [
+    "define ", prt ty, " ", prt ident, "(", 
+    intercalate ", " (map (\(ty,ident) -> (prt ty) ++ " " ++ (prt ident)) args),
+    ")"]):((map prt allocs) ++ (intercalate [""] . map printBlock $ blocks))
 
--- TODO change ' ' to unwords
-printFunctionDef :: FunctionDef -> [String]
-printFunctionDef (FunctionDef (FunctionAddr ident type_) args vars blocks) = concat [
-        [concat ["define ", printType type_, " ", printIdent ident, "(", intercalate ", " (map (\reg -> printRegisterType reg ++ " " ++ printRegister reg) (toList . Seq.reverse $ args)),") {"]],
-        map printAlloc $ toList . Seq.reverse $ vars,
-        (intercalate [""] . map printBlock) $ Map.elems blocks,
-        ["}"]]
-
-
-printClassDef :: ClassDef -> String
-printClassDef (ClassDef ident types) = concat [printUniqueId ident, " = type { ", intercalate ", " $ map printType (toList . Seq.reverse $ types), " }"]
-
-printUniqueId :: UniqueId -> String
-printUniqueId (UniqueId str) = "%" ++ str
-
-printIdent :: Ident -> String
-printIdent (Ident str) = "@" ++ str 
-
-printAlloc :: Alloc -> String
-printAlloc (Alloc reg@(Register _ (Ptr ty))) = concat ["\t", printRegister reg, " = alloca ", printType ty]
-
-printRegister :: Register -> String
-printRegister (Register (UniqueId str) _) = '%':str
-
-printRegisterType :: Register -> String
-printRegisterType (Register _ ty) = printType ty
-
-printType :: Type -> String
-printType Size1 = "i1"
-printType Size8 = "i8"
-printType Size32 = "i32"
-printType Void = "void"
-printType (Ptr ty) = (printType ty) ++ "*"
-printType (Arr int ty) = concat ["[", show int, " x ", printType ty, "]"]
-printType (TypeClass ident) = printUniqueId ident
-
-printBlock :: Block -> [String]
-printBlock (Block label phi body end) = case label of
-    Entry -> printBlockContent phi body end
-    (Label _ (UniqueId l)) -> ("; <label>: " ++ l):(printBlockContent phi body end)
-  where
-    printBlockContent :: Seq.Seq Phi -> Seq.Seq Instruction -> BlockEnd -> [String]
-    printBlockContent phi body end = concat [
-        map printPhi $ toList phi,
-        map printInstruction $ toList . Seq.reverse $ body,
-        [printBlockEnd end]] 
-
-printInstruction :: Instruction -> String
-printInstruction (InstrBinOp reg binOp op1 op2) = concat [
-    "\t", printRegister reg, " = ", printOperator binOp, " ", printOperandType op1, " ", printOperand op1, ", ", printOperand op2]
-printInstruction (InstrVoidCall (FunctionAddr ident ty) operands) = concat ["\tcall void ", printIdent ident,"(", intercalate ", " $ map (\op -> (printOperandType op) ++ " " ++ (printOperand op)) operands, ")"]
-printInstruction (InstrGetElementPtr reg operand nums) = concat [
-    "\t", printRegister reg, " = getelementptr inbounds ", printDerefType operand, ", ", printOperandType operand, " ", printOperand operand, ", ", intercalate ", " $ map (\(ty, nr) -> (printType ty) ++ " " ++ (printIdx nr)) nums]
-printInstruction (InstrCall reg (FunctionAddr ident ty) operands) = concat ["\t", printRegister reg, " = call ", printType ty," ",printIdent ident,"(", intercalate ", " $ map (\op -> (printOperandType op) ++ " " ++ (printOperand op)) operands, ")"]
-printInstruction (InstrCmp reg cond op1 op2) = concat [
-    "\t", printRegister reg, " = icmp ", printCond cond, " ", printOperandType op1, " ", printOperand op1, ", ", printOperand op2]
-printInstruction (InstrLoad reg1 reg2) = concat [
-    "\t", printRegister reg1, " = load ", printRegisterType reg1, ", ", printRegisterType reg2, " ", printRegister reg2]
-printInstruction (InstrStore op reg) = concat [
-    "\tstore ", printOperandType op, " ", printOperand op, ", ", printRegisterType reg, " ", printRegister reg]
-printInstruction (InstrBitcast reg operand) = concat [
-    "\t", printRegister reg, " = ", "bitcast ", printOperandType operand, " ", printOperand operand, " to ", printRegisterType reg]
-
-printIdx :: Idx -> String
-printIdx (IdxConst int) = show int
-printIdx (IdxAddr (UniqueId str)) =  "%" ++ str
-
-printDerefType :: Operand -> String
-printDerefType (Reg (Register _ (Ptr ty))) = printType ty
-
-printCond :: Cond -> String
-printCond EQU = "eq"
-printCond NE = "ne"
-printCond GTH = "sgt"
-printCond GE = "sge"
-printCond LTH = "slt"
-printCond LE = "sle"
-
-
-printOperator :: Op -> String
-printOperator Plus = "add"
-printOperator Minus = "sub"
-printOperator Times = "mul"
-printOperator Div = "sdiv"
-printOperator Mod = "mod"
-
-printPhi :: Phi -> String
-printPhi (Phi reg branches) = concat["\t", printRegister reg, " = phi ", printRegisterType reg, " ", intercalate ", " (map printPhiBranch branches)]
-
-printPhiBranch :: PhiBranch -> String
-printPhiBranch (PhiBranch label op) = concat ["[ ", printOperand op, ", ", printLabel label, " ]"]
-
-printLabel :: Label -> String
-printLabel (Label _ (UniqueId str)) = "%" ++ str
-printLabel Entry = "%0"
-
-printBlockEnd :: BlockEnd -> String
-printBlockEnd (BlockEndBranch label) = "\tbr label " ++ (printLabel label)  
-printBlockEnd (BlockEndReturn op) = concat ["\tret ", printOperandType op, " ", printOperand op]
-printBlockEnd BlockEndReturnVoid = "\tret void"
-printBlockEnd BlockEndNone = ""
-printBlockEnd (BlockEndBranchCond op label1 label2) = concat [
-    "\tbr ", printOperandType op, " ", printOperand op, ", label ", printLabel label1, ", label ", printLabel label2]
-
-printOperand :: Operand -> String
-printOperand (Reg reg) = printRegister reg
-printOperand (Glob (GlobalString ident _ _)) = printIdent ident
-printOperand Null = "null"
-printOperand (ConstBool True) = "true"
-printOperand (ConstBool False) = "false"
-printOperand (ConstInt int) = (show int)
-
-printOperandType :: Operand -> String
-printOperandType (Reg reg) = printRegisterType reg
-printOperandType (Glob (GlobalString _ ty _)) = printType ty
-printOperandType (ConstBool _) = printType Size1
-printOperandType (ConstInt _) = printType Size32
+printBlock :: CodeBlock -> [String]
+printBlock (CodeBlock label phi body end) = map (++ "  ") $ concat [
+        map prt phi,
+        map prt body,
+        [prt end]
+    ]
 
 printBuiltInFunctions :: [String]
 printBuiltInFunctions = [
@@ -145,3 +33,73 @@ printBuiltInFunctions = [
     "declare i8* @readString()",
     "declare i8* @concat(i8*, i8*)",
     "declare i8* @malloc(i32)"]
+
+class Printer a where
+    prt :: a -> String
+    
+instance Printer ClassDef where
+    prt (ClassDef ident tys) = unwords [prt ident, "=", "{", intercalate ", " $ map prt tys, "}"]
+
+instance Printer StringDef where
+    prt (StringDef ident ty str) = unwords [prt ident, "=", prt ty, "c\"" ++ str ++ "\"\\00"]
+
+instance Printer Alloc where
+    prt (Alloc ident ty) = unwords [prt ident, "=", "alloca", prt ty]
+
+instance Printer Phi where
+    prt (Phi ident branches) = unwords [prt ident, "=", "phi", intercalate ", " $ map prt branches]
+
+instance Printer PhiBranch where
+    prt (PhiBranch ident op) = unwords ["[", prt ident, prt op, "]"]
+
+instance Printer BlockEnd where
+    prt (BlockEndBranch ident) = unwords ["br", "label", prt ident]
+    prt (BlockEndBranchCond ty op ident1 ident2) = unwords ["br", prt ty, prt op ++ ",", "label", prt ident1 ++ ",", prt ident2]
+    prt (BlockEndReturn ty op) = unwords ["ret", prt ty, prt op]
+    prt (BlockEndReturnVoid) = unwords ["ret", "void"]
+
+instance Printer Instruction where
+    prt (InstrBinOp res binOp ty op1 op2) = unwords [prt res, "=", prt binOp, prt ty, prt op1 ++ ",", prt op2]
+    prt (InstrCall res ty ident args) = unwords [prt res, "=", prt ty, prt ident ++ "(" ++ (intercalate ", " $ map (\(ty, op)-> (prt ty) ++ " " ++ (prt op)) args) ++ ")"]
+    prt (InstrVoidCall ident args) = unwords ["void", prt ident ++ "(" ++ (intercalate ", " $ map (\(ty, op)-> (prt ty) ++ " " ++ (prt op)) args) ++ ")"]
+    prt (InstrGetElementPtr res ty1 ty2 op idxs) = unwords [prt res, "=", "getelementptr", prt ty1 ++ ",", prt ty2, prt op ++ ",", intercalate ", " $ map (\op -> "i32 " ++ (prt op)) idxs]
+    prt (InstrCmp res cond ty op1 op2) = unwords [prt res, "=", "icmp", prt cond, prt ty, prt op1 ++ ",", prt op2]
+    prt (InstrBitcast res ty1 op ty2) = unwords [prt res, "=", "bitcast", prt ty1, prt op, "to", prt ty2]
+    prt (InstrLoad res ty1 ty2 op) = unwords [prt res, "=", "load", prt ty1 ++ ",", prt ty2, prt op]
+    prt (InstrStore ty1 op1 ty2 op2) = unwords ["store", prt ty1, prt op1 ++ ",", prt ty2, prt op2]
+
+instance Printer Operand where
+    prt (Loc ident) = prt ident 
+    prt (Glob ident) = prt ident
+    prt (ConstBool bool) = show bool
+    prt (ConstInt int) = show int
+
+instance Printer Type where
+    prt Void = "void"
+    prt Size1 = "i1"
+    prt Size8 = "i8"
+    prt Size32 = "i32"
+    prt (Ptr ty) = (prt ty) ++ "*"
+    prt (Arr int ty) = concat ["[", show int, " x ", prt ty, "]"]
+    prt (TypeClass ident) = prt ident
+
+instance Printer LocalIdent where
+    prt (LocalIdent str) = '%':str
+
+instance Printer GlobalIdent where
+    prt (GlobalIdent str) = '@':str
+
+instance Printer Cond where
+    prt EQU = "eq"
+    prt NE = "ne"
+    prt GTH = "sgt"
+    prt GE = "sge"
+    prt LTH = "slt"
+    prt LE = "sle"
+
+instance Printer Op where
+    prt Plus = "add"
+    prt Minus = "sub"
+    prt Times = "mul"
+    prt Div = "sdiv"
+    prt Mod = "mod"

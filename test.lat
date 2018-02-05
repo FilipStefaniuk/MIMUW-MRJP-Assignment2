@@ -1,25 +1,9 @@
 class A {
-	int f() {
-		printInt(10);
-		return 0;
-	}
+	int x;
+	int y;
+	void f (int x, int y) {}
 }
 
-class B extends A {
+int f (boolean z) {
 
-int g() {
-	f();
-	return 0;
-}
-}
-
-int f() {
-	printInt(30);
-	return 0;
-}
-
-int main () {
-    B b = new B;
-    b.g();
-    return 0;
 }

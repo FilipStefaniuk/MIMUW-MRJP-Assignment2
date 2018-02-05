@@ -28,6 +28,7 @@ library
                        Frontend.Printer
   build-depends:       base,
                        mtl,
+                       extra,
                        containers,
                        transformers,
                        array

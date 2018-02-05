@@ -4,90 +4,71 @@ import Data.Map as Map
 import Data.Sequence as Seq
 import Data.List as List
 
-newtype UniqueId = UniqueId String
+newtype GlobalIdent = GlobalIdent String
     deriving (Eq, Ord, Show)
 
-data Label = Entry | Label Integer UniqueId
+newtype LocalIdent = LocalIdent String
     deriving (Eq, Ord, Show)
-
-newtype Ident = Ident String
-    deriving (Eq, Ord)
-
-data FunctionAddr = FunctionAddr Ident Type
-    deriving (Eq, Ord)
-
-data Register = Register UniqueId Type 
-    deriving (Eq, Ord)
-
-data Global = GlobalString Ident Type String
-    deriving (Eq, Ord)
 
 data Operand 
-    = Reg Register 
-    | Glob Global
+    = Loc LocalIdent 
+    | Glob GlobalIdent
     | ConstBool Bool
     | ConstInt Integer
-    | Null
-    deriving (Eq, Ord)
+    deriving (Eq, Ord, Show)
 
-data Type = Size1 | Size8 | Size32 | Ptr Type | Arr Integer Type | Void | TypeClass UniqueId
-    deriving (Eq, Ord)
+data Type 
+    = Size1 
+    | Size8 
+    | Size32 
+    | Ptr Type 
+    | Arr Integer Type 
+    | Void 
+    | TypeClass LocalIdent
+    deriving (Eq, Ord, Show)
 
-data Phi = Phi Register [PhiBranch] 
-    deriving Eq
+data Phi = Phi LocalIdent [PhiBranch] 
+    deriving (Eq, Ord, Show)
 
-data PhiBranch = PhiBranch Label Operand 
-    deriving Eq
+data PhiBranch = PhiBranch LocalIdent Operand 
+    deriving (Eq, Ord, Show)
     
-data Block = Block {
-    _blockLabel :: Label,
-    _blockPhi :: Seq.Seq Phi,
-    _blockBody :: Seq.Seq Instruction,
-    _blockEnd :: BlockEnd
-} deriving Eq
+data CodeBlock = CodeBlock LocalIdent [Phi] [Instruction] BlockEnd
+    deriving (Eq, Ord, Show)
 
 data BlockEnd
-    = BlockEndBranch Label
-    | BlockEndBranchCond Operand Label Label
-    | BlockEndReturn Operand
+    = BlockEndBranch LocalIdent
+    | BlockEndBranchCond Type Operand LocalIdent LocalIdent
+    | BlockEndReturn Type Operand
     | BlockEndReturnVoid
     | BlockEndNone
-    deriving Eq
+    deriving (Eq, Ord, Show)
 
-data Alloc = Alloc Register
-    deriving Eq
+data Alloc = Alloc LocalIdent Type
+    deriving (Eq, Ord, Show)
 
 data Instruction
-    = InstrBinOp Register Op Operand Operand
-    | InstrCall Register FunctionAddr [Operand]
-    | InstrVoidCall FunctionAddr [Operand]
-    | InstrGetElementPtr Register Operand [(Type, Idx)]
-    | InstrCmp Register Cond Operand Operand
-    | InstrBitcast Register Operand
-    | InstrLoad Register Register
-    | InstrStore Operand Register
-    deriving Eq
+    = InstrBinOp LocalIdent Op Type Operand Operand
+    | InstrCall LocalIdent Type GlobalIdent [(Type, Operand)]
+    | InstrVoidCall GlobalIdent [(Type, Operand)]
+    | InstrGetElementPtr LocalIdent Type Type Operand [Operand]
+    | InstrCmp LocalIdent Cond Type Operand Operand
+    | InstrBitcast LocalIdent Type Operand Type
+    | InstrLoad LocalIdent Type Type LocalIdent
+    | InstrStore Type Operand Type LocalIdent
+    deriving (Eq, Ord, Show)
 
-data Idx = IdxConst Integer | IdxAddr UniqueId
-    deriving (Eq, Show)
+data FunctionDef = FunctionDef Type GlobalIdent [(Type, LocalIdent)] [Alloc] [CodeBlock]
+    deriving (Eq, Ord, Show)
 
-data FunctionDef = FunctionDef {
-    _functionAddr :: FunctionAddr,
-    _functionArgs :: Seq.Seq Register,
-    _localVars :: Seq.Seq Alloc,
-    _blocks :: Map.Map Label Block
-}
+data ClassDef = ClassDef LocalIdent [Type]
+    deriving (Eq, Ord, Show)
 
-data ClassDef = ClassDef {
-    _classIdent :: UniqueId,
-    _fieldTypes :: Seq.Seq Type
-}
+data StringDef = StringDef GlobalIdent Type String
+    deriving (Eq, Ord, Show)
 
-data Program = Program {
-    _programStrings :: [Global],
-    _classDefs :: Seq.Seq ClassDef,
-    _functionDefs :: Seq.Seq FunctionDef
-}
+data Program = Program [ClassDef] [StringDef] [FunctionDef] 
+    deriving (Eq, Ord, Show)
 
 data Op
     = Plus
@@ -95,7 +76,7 @@ data Op
     | Times
     | Div
     | Mod
-    deriving Eq
+    deriving (Eq, Ord, Show)
 
 data Cond
     = LTH
@@ -104,4 +85,4 @@ data Cond
     | GE
     | EQU
     | NE
-    deriving Eq
+    deriving (Eq, Ord, Show)
