@@ -49,8 +49,8 @@ import ErrM
   'new' { PT _ (TS _ 34) }
   'null' { PT _ (TS _ 35) }
   'return' { PT _ (TS _ 36) }
-  'string' { PT _ (TS _ 37) }
-  'this' { PT _ (TS _ 38) }
+  'self' { PT _ (TS _ 37) }
+  'string' { PT _ (TS _ 38) }
   'true' { PT _ (TS _ 39) }
   'void' { PT _ (TS _ 40) }
   'while' { PT _ (TS _ 41) }
@@ -118,7 +118,7 @@ LVal :: { LVal }
 LVal : Ident { AbsLatte.LVar $1 }
      | Expr7 '[' Expr ']' { AbsLatte.LArr $1 $3 }
      | Expr7 '.' Ident { AbsLatte.LAttr $1 $3 }
-     | 'this' { AbsLatte.LSelf }
+     | 'self' { AbsLatte.LSelf }
 Type :: { Type }
 Type : 'void' { AbsLatte.Void }
      | 'int' { AbsLatte.Int }

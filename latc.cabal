@@ -37,7 +37,7 @@ library
   default-language:    Haskell2010
   ghc-options:         -fno-warn-warnings-deprecations
 
-executable latc
+executable latc_llvm
   main-is:             Main.hs
   -- other-modules:       
   -- other-extensions:    

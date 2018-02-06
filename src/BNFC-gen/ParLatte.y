@@ -142,13 +142,13 @@ Expr4 :: { Expr }
 Expr4 : Expr5 { $1 } | Expr4 MulOp Expr5 { AbsLatte.EMul $1 $2 $3 }
 Expr5 :: { Expr }
 Expr5 : Expr6 { $1 }
+      | '(' Ident ')' Expr6 { AbsLatte.ECast $2 $4 }
       | '-' Expr6 { AbsLatte.Neg $2 }
       | '!' Expr6 { AbsLatte.Not $2 }
 Expr6 :: { Expr }
 Expr6 : Expr7 { $1 }
       | 'new' Ident { AbsLatte.ENewObj $2 }
       | 'new' Type '[' Expr ']' { AbsLatte.ENewArr $2 $4 }
-      | '(' Ident ')' Expr7 { AbsLatte.ECast $2 $4 }
 Expr7 :: { Expr }
 Expr7 : '(' Expr ')' { $2 }
       | Integer { AbsLatte.ELitInt $1 }

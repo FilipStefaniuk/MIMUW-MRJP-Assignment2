@@ -166,7 +166,7 @@ instance Print Expr where
     EMetCall expr id exprs -> prPrec i 7 (concatD [prt 7 expr, doc (showString "."), prt 0 id, doc (showString "("), prt 0 exprs, doc (showString ")")])
     ENewObj id -> prPrec i 6 (concatD [doc (showString "new"), prt 0 id])
     ENewArr type_ expr -> prPrec i 6 (concatD [doc (showString "new"), prt 0 type_, doc (showString "["), prt 0 expr, doc (showString "]")])
-    ECast id expr -> prPrec i 6 (concatD [doc (showString "("), prt 0 id, doc (showString ")"), prt 7 expr])
+    ECast id expr -> prPrec i 5 (concatD [doc (showString "("), prt 0 id, doc (showString ")"), prt 6 expr])
     Neg expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])
     Not expr -> prPrec i 5 (concatD [doc (showString "!"), prt 6 expr])
     EMul expr1 mulop expr2 -> prPrec i 4 (concatD [prt 4 expr1, prt 0 mulop, prt 5 expr2])

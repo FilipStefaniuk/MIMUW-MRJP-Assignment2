@@ -142,7 +142,7 @@ instance Print LVal where
     LVar id -> prPrec i 0 (concatD [prt 0 id])
     LArr expr1 expr2 -> prPrec i 0 (concatD [prt 7 expr1, doc (showString "["), prt 0 expr2, doc (showString "]")])
     LAttr expr id -> prPrec i 0 (concatD [prt 7 expr, doc (showString "."), prt 0 id])
-    LSelf -> prPrec i 0 (concatD [doc (showString "this")])
+    LSelf -> prPrec i 0 (concatD [doc (showString "self")])
 
 instance Print Type where
   prt i e = case e of

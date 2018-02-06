@@ -3,9 +3,9 @@ all:
 	llvm-as -o ./lib/runtime.bc ./lib/runtime.ll
 	cabal configure
 	cabal build
-	cp ./dist/build/latc/latc .
+	cp ./dist/build/latc_llvm/latc_llvm .
 
 clean:
 	cabal clean
-	rm ./lib/runtime.ll ./lib/runtime.bc
-	rm ./latc
+	rm -f ./lib/runtime.ll ./lib/runtime.bc
+	rm -f ./latc_llvm
