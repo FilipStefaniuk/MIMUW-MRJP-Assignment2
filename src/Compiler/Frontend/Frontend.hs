@@ -8,7 +8,6 @@ import Control.Monad.State
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Cont
-import Control.Monad.Extra
 import Data.Foldable
 import Data.Maybe
 import qualified Data.Map as Map
@@ -271,7 +270,9 @@ transFunDef fun (ABS.FunDef type_ ident args (ABS.Blk stmts)) = do
         (Just fun) <- asks $ _currentFunction
         case _functionType fun of 
             ABS.Void -> emitEnd $ BlockEndReturnVoid
-            _ -> ifM (isReturn) (return ()) (throwError $ GenMError "ERROR: missing return statement")
+            _ -> (isReturn) >>= \case 
+                True -> (return ()) 
+                False -> (throwError $ GenMError "ERROR: missing return statement")
 
 transArg :: GenM m => ABS.Arg -> ContT () m ()
 transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockVariables) >>= \case
@@ -297,7 +298,9 @@ transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockV
 transBlock :: GenM m => ABS.Block -> ContT () m ()
 transBlock (ABS.Blk stmts) = do
     lift . local (\env -> env{_blockVariables = Set.empty}) $ runContT (forM_ stmts transStmt) return
-    ifM (lift isReturn) (ContT $ \next -> return ()) (return ())
+    (lift isReturn) >>= \case 
+        True -> (ContT $ \next -> return ()) 
+        False -> (return ())
 
 transStmt :: GenM m => ABS.Stmt -> ContT () m ()
 transStmt ABS.Empty = return ()
@@ -414,9 +417,9 @@ transItem type_ (ABS.NoInit ident) = transItem type_ (ABS.Init ident (defaultIni
     defaultInit _ = ABS.ENull
 
 transItem type1 (ABS.Init ident@(ABS.Ident str) expr) = 
-    ifM (lift $ asks (Set.member ident . _blockVariables)) 
-    (lift . throwError $ GenMError "Error: Multiple variable declaration")
-    . ContT $ \next -> do
+    (lift $ asks (Set.member ident . _blockVariables)) >>= \case 
+    True -> (lift . throwError $ GenMError "Error: Multiple variable declaration")
+    False -> ContT $ \next -> do
             varName <- getVarName ident
             (type2, operand) <- transExprCompatibleType type1 expr >>= uncurry zextBool
             ty1 <- transType type1
@@ -433,7 +436,9 @@ transItem type1 (ABS.Init ident@(ABS.Ident str) expr) =
   where
     getVarName :: GenM m => ABS.Ident -> m LocalIdent
     getVarName (ABS.Ident str) = do
-        str <- ifM (gets $ (Set.member str) . _usedIdentifiers) (getNextFreeName str 1) (return str)
+        (gets $ (Set.member str) . _usedIdentifiers) >>= \case
+            True -> (getNextFreeName str 1) 
+            False -> (return str)
         modify $ \s -> s{_usedIdentifiers = Set.insert str (_usedIdentifiers s)}
         return $ LocalIdent str
 
