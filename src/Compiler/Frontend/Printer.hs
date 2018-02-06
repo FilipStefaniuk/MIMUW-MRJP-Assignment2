@@ -47,7 +47,7 @@ instance Printer Alloc where
     prt (Alloc ident ty) = unwords [prt ident, "=", "alloca", prt ty]
 
 instance Printer Phi where
-    prt (Phi ident branches) = unwords [prt ident, "=", "phi", intercalate ", " $ map prt branches]
+    prt (Phi ident ty branches) = unwords [prt ident, "=", "phi", prt ty, intercalate ", " $ map prt branches]
 
 instance Printer PhiBranch where
     prt (PhiBranch ident op) = unwords ["[", prt ident, prt op, "]"]
@@ -73,6 +73,7 @@ instance Printer Operand where
     prt (Glob ident) = prt ident
     prt (ConstBool bool) = show bool
     prt (ConstInt int) = show int
+    prt Null = "null"
 
 instance Printer Type where
     prt Void = "void"

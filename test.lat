@@ -1,9 +1,5 @@
-class A {
-	int x;
-	int y;
-	void f (int x, int y) {}
-}
-
-int f (boolean z) {
-
+int main() {
+	string a = "Ala ";
+	string b = "ma kota.";
+	return 0;
 }

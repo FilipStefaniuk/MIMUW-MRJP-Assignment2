@@ -15,6 +15,7 @@ data Operand
     | Glob GlobalIdent
     | ConstBool Bool
     | ConstInt Integer
+    | Null
     deriving (Eq, Ord, Show)
 
 data Type 
@@ -27,7 +28,7 @@ data Type
     | TypeClass LocalIdent
     deriving (Eq, Ord, Show)
 
-data Phi = Phi LocalIdent [PhiBranch] 
+data Phi = Phi LocalIdent Type [PhiBranch] 
     deriving (Eq, Ord, Show)
 
 data PhiBranch = PhiBranch LocalIdent Operand 
