@@ -12,8 +12,8 @@ import LexLatte
 import ParLatte
 import ErrM
 
-import Frontend.Frontend
-import Frontend.Printer
+import Compiler
+import Printer
 
 main :: IO ()
 main = getArgs >>= handle

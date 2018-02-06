@@ -23,9 +23,9 @@ library
                        PrintLatte,
                        AbsLatte,
                        ErrM,
-                       Frontend.Frontend,
-                       Frontend.LLVM,
-                       Frontend.Printer
+                       Compiler,
+                       LLVM,
+                       Printer
   build-depends:       base,
                        mtl,
                        containers,

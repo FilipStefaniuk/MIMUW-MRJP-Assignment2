@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Frontend.Frontend where
+module Compiler where
   
 import Control.Monad.State
 import Control.Monad.Error
@@ -18,7 +18,7 @@ import LexLatte
 import ParLatte
 import ErrM
 
-import Frontend.LLVM
+import LLVM
 
 data Variable = Variable {
     _variableType :: ABS.Type,

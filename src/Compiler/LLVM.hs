@@ -1,4 +1,4 @@
-module Frontend.LLVM where
+module LLVM where
 
 import Data.Map as Map
 import Data.Sequence as Seq

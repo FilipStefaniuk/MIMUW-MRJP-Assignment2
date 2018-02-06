@@ -1,6 +1,6 @@
-module Frontend.Printer where
+module Printer where
 
-import Frontend.LLVM
+import LLVM
 import Data.List
 
 printProgram :: Program -> String
