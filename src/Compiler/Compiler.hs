@@ -442,7 +442,7 @@ transItem type1 (ABS.Init ident@(ABS.Ident str) expr) =
   where
     getVarName :: GenM m => ABS.Ident -> m LocalIdent
     getVarName (ABS.Ident str) = do
-        (gets $ (Set.member str) . _usedIdentifiers) >>= \case
+        str <- (gets $ (Set.member str) . _usedIdentifiers) >>= \case
             True -> (getNextFreeName str 1) 
             False -> (return str)
         modify $ \s -> s{_usedIdentifiers = Set.insert str (_usedIdentifiers s)}

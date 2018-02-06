@@ -5,7 +5,7 @@ declare i32 @readInt()
 declare i8* @readString()
 declare i8* @concat(i8*, i8*)
 declare i8* @malloc(i32)
-declare void @llvm.memset.p0i8.i32(i8*, i8, i32, i1)
+declare void @llvm.memset.p0i8.i32(i8*, i8, i32, i32, i1)
 
 
 @.str.3 = constant [1 x i8] c"\00"
