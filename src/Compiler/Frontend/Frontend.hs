@@ -7,7 +7,7 @@ module Frontend.Frontend where
 import Control.Monad.State
 import Control.Monad.Error
 import Control.Monad.Reader
-import Control.Monad.Cont
+import qualified Control.Monad.Cont as Cont
 import Data.Foldable
 import Data.Maybe
 import qualified Data.Map as Map
@@ -130,7 +130,7 @@ getBuiltinFunctions = Map.fromList [
 
 transProgram :: GenM m => ABS.Program -> m Program
 transProgram (ABS.Prog topdefs) = do
-    runContT (mapM_ collectTopDef topdefs) $ \_ -> mapM_ transTopDef topdefs >> checkMain
+    Cont.runContT (mapM_ collectTopDef topdefs) $ \_ -> mapM_ transTopDef topdefs >> checkMain
     classDefs <- gets $ toList . Seq.reverse . _classDefs
     stringDefs <- gets $ Map.elems . _stringsDefs
     functionDefs <- gets $ toList . Seq.reverse . _functionDefs
@@ -143,19 +143,19 @@ transProgram (ABS.Prog topdefs) = do
         Just (Function _ type_ types _) -> unless (type_ == ABS.Int && null types) . throwError $ GenMError "ERROR: wrong type of main function"
 
 
-    collectTopDef :: GenM m => ABS.TopDef -> ContT () m ()
+    collectTopDef :: GenM m => ABS.TopDef -> Cont.ContT () m ()
     collectTopDef (ABS.ClassDef ident items) = collectClassDef ident Nothing >> mapM_ (collectClassItem ident) items
     collectTopDef (ABS.ClassExtDef ident1 ident2 items) = collectClassDef ident1 (Just ident2) >> mapM_ (collectClassItem ident1) items
     collectTopDef (ABS.TopFunDef fun@(ABS.FunDef _ ident@(ABS.Ident str) _ _)) = (lift . asks $ (Map.lookup ident) . _functions) >>= \case
         Just _ -> lift . throwError $ GenMError "ERROR: multiple function declaration"
-        Nothing -> ContT $ \next -> local (\env -> env{
+        Nothing -> Cont.ContT $ \next -> local (\env -> env{
             _functions = Map.insert ident (getFunction str fun) $ _functions env
         }) $ next ()
 
-    collectClassDef :: GenM m => ABS.Ident -> Maybe ABS.Ident ->  ContT () m ()
+    collectClassDef :: GenM m => ABS.Ident -> Maybe ABS.Ident ->  Cont.ContT () m ()
     collectClassDef ident@(ABS.Ident str) parent = (lift . asks $ (Map.lookup ident) . _classes) >>= \case
         Just class_ -> lift . throwError $ GenMError "ERROR: multiple class definition"
-        Nothing -> ContT $ \next ->  local (\env -> env{_classes = Map.insert ident Class{
+        Nothing -> Cont.ContT $ \next ->  local (\env -> env{_classes = Map.insert ident Class{
             _classAddr = LocalIdent $ "class." ++ str,
             _fieldsCount = if isJust $ parent then 1 else 0,
             _className = ident,
@@ -164,12 +164,12 @@ transProgram (ABS.Prog topdefs) = do
             _classMethods = Map.empty
         } $ _classes env}) $ next ()
 
-    collectClassItem :: GenM m => ABS.Ident -> ABS.ClassItemDef -> ContT () m ()
+    collectClassItem :: GenM m => ABS.Ident -> ABS.ClassItemDef -> Cont.ContT () m ()
     collectClassItem classIdent (ABS.AttrDef type_ ident) = (lift . asks $ (Map.lookup classIdent) . _classes) >>= \case
         Nothing -> lift . throwError $ GenMError "ERROR: internal error"
         Just class_ -> case Map.lookup ident $ _classFields class_ of
             Just _ -> lift . throwError $ GenMError "ERROR: multiple class field declaration"
-            Nothing -> ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
+            Nothing -> Cont.ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
                 _classFields = Map.insert ident (type_, _fieldsCount class_) $ _classFields class_,
                 _fieldsCount = (_fieldsCount class_) + 1
             } $ _classes env}) $ next ()
@@ -180,7 +180,7 @@ transProgram (ABS.Prog topdefs) = do
         Just class_ -> case Map.lookup ident $ _classMethods class_ of
             Just _ -> lift . throwError $ GenMError "ERROR: multiple method declaration"
             Nothing -> let method = getFunction (str1 ++ "." ++ str2) fun in
-                ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
+                Cont.ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
                 _classMethods = Map.insert ident (method{
                     _functionArguments = (ABS.Obj . _className $ class_):(_functionArguments method)
                 }) $ _classMethods class_} $ _classes env}) $ next ()
@@ -253,7 +253,7 @@ transFunDef fun (ABS.FunDef type_ ident args (ABS.Blk stmts)) = do
         _usedIdentifiers = Set.empty
     }
 
-    local (\env -> env{_currentFunction = Just fun}) $ runContT (mapM_ transArg args >> mapM_ transStmt stmts) (const setReturn) 
+    local (\env -> env{_currentFunction = Just fun}) $ Cont.runContT (mapM_ transArg args >> mapM_ transStmt stmts) (const setReturn) 
 
     ty <- transType type_
     funAddr <- return . _functionAddress $ fun
@@ -280,10 +280,10 @@ transFunDef fun (ABS.FunDef type_ ident args (ABS.Blk stmts)) = do
                 True -> (return ()) 
                 False -> (throwError $ GenMError "ERROR: missing return statement")
 
-transArg :: GenM m => ABS.Arg -> ContT () m ()
+transArg :: GenM m => ABS.Arg -> Cont.ContT () m ()
 transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockVariables) >>= \case
     True -> lift . throwError $ GenMError "ERROR: multiple arguments declaration"
-    False -> ContT $ \next -> do
+    False -> Cont.ContT $ \next -> do
         modify $ \s -> s{_usedIdentifiers = Set.insert str (_usedIdentifiers s)}
         when (type_ == ABS.Void) . throwError $ GenMError "ERROR: void type argument"
         ty <- transType type_
@@ -301,14 +301,14 @@ transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockV
             _variables = Map.insert ident (Variable type_ res) $ _variables env
         }) $ next ()
 
-transBlock :: GenM m => ABS.Block -> ContT () m ()
+transBlock :: GenM m => ABS.Block -> Cont.ContT () m ()
 transBlock (ABS.Blk stmts) = do
-    lift . local (\env -> env{_blockVariables = Set.empty}) $ runContT (mapM_ transStmt stmts) return
+    lift . local (\env -> env{_blockVariables = Set.empty}) $ Cont.runContT (mapM_ transStmt stmts) return
     (lift isReturn) >>= \case 
-        True -> (ContT $ \next -> return ()) 
+        True -> (Cont.ContT $ \next -> return ()) 
         False -> (return ())
 
-transStmt :: GenM m => ABS.Stmt -> ContT () m ()
+transStmt :: GenM m => ABS.Stmt -> Cont.ContT () m ()
 transStmt ABS.Empty = return ()
 
 transStmt (ABS.BStmt block) = transBlock block
@@ -333,13 +333,13 @@ transStmt (ABS.Ret expr) = do
     (type_, op) <- lift $ transExprCompatibleType (_functionType fun) expr >>= uncurry zextBool
     ty <- lift $ transType type_
     lift . emitEnd $ BlockEndReturn ty op
-    ContT $ \next -> return ()
+    Cont.ContT $ \next -> return ()
 
 transStmt ABS.VRet = do
     (Just fun) <- lift . asks $ _currentFunction
     lift . unless (_functionType fun == ABS.Void) . throwError $ GenMError "ERROR: void return in non void function"
     lift . emitEnd $ BlockEndReturnVoid
-    ContT $ \next -> return ()
+    Cont.ContT $ \next -> return ()
     
 transStmt (ABS.Cond expr stmt) = do
     operand <- lift $ transExprRequireType ABS.Bool expr
@@ -351,7 +351,7 @@ transStmt (ABS.Cond expr stmt) = do
 
             ifBlock <- newBlock
             modify $ \s -> s{_currentBlock = ifBlock}
-            runContT (transBlock (ABS.Blk [stmt])) return
+            Cont.runContT (transBlock (ABS.Blk [stmt])) return
             
             end <- newBlock
             emitEnd $ BlockEndBranch (LocalIdent . show $ end)
@@ -368,17 +368,17 @@ transStmt (ABS.CondElse expr stmt1 stmt2) = do
             
             trueBlock <- lift $ newBlock
             lift . modify $ \s -> s{_currentBlock = trueBlock}
-            lift $ runContT (transBlock (ABS.Blk [stmt1])) return
+            lift $ Cont.runContT (transBlock (ABS.Blk [stmt1])) return
             trueBlockRet <- lift $ isReturn
 
             falseBlock <- lift $ newBlock
             lift . modify $ \s -> s{_currentBlock = falseBlock}
-            lift $ runContT (transBlock (ABS.Blk [stmt2])) return
+            lift $ Cont.runContT (transBlock (ABS.Blk [stmt2])) return
             falseBlockRet <- lift $ isReturn
 
             lift . (inBlock begin) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ trueBlock) (LocalIdent . show $ falseBlock)
             
-            if trueBlockRet && falseBlockRet then ContT $ \next -> return () else lift $ do
+            if trueBlockRet && falseBlockRet then Cont.ContT $ \next -> return () else lift $ do
                 end <- newBlock
                 emitEnd $ BlockEndBranch (LocalIdent . show $ end)
                 (inBlock trueBlock) . emitEnd $ BlockEndBranch (LocalIdent . show $ end)
@@ -391,14 +391,14 @@ transStmt (ABS.While expr stmt) = lift $ do
     operand <- transExprRequireType ABS.Bool expr
     case operand of
         ConstBool True -> do
-            runContT (transBlock (ABS.Blk [stmt])) return
+            Cont.runContT (transBlock (ABS.Blk [stmt])) return
             emitEnd $ BlockEndBranch (LocalIdent . show $ cond)
             end <- newBlock
             modify $ \s -> s{_currentBlock = end}
         _ -> do
             body <- newBlock
             modify $ \s -> s{_currentBlock = body}
-            runContT (transBlock (ABS.Blk [stmt])) return
+            Cont.runContT (transBlock (ABS.Blk [stmt])) return
             emitEnd $ BlockEndBranch (LocalIdent . show $ cond)
             end <- newBlock
             (inBlock cond) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ body) (LocalIdent . show $ end)
@@ -414,7 +414,7 @@ transStmt (ABS.For type_ ident expr stmt) = transBlock (ABS.Blk [
         ABS.Incr (ABS.LVar (ABS.Ident ".t"))
     ])))])
 
-transItem :: GenM m => ABS.Type -> ABS.Item -> ContT () m ()
+transItem :: GenM m => ABS.Type -> ABS.Item -> Cont.ContT () m ()
 transItem type_ (ABS.NoInit ident) = transItem type_ (ABS.Init ident (defaultInit type_))
   where
     defaultInit :: ABS.Type -> ABS.Expr
@@ -425,7 +425,7 @@ transItem type_ (ABS.NoInit ident) = transItem type_ (ABS.Init ident (defaultIni
 transItem type1 (ABS.Init ident@(ABS.Ident str) expr) = 
     (lift $ asks (Set.member ident . _blockVariables)) >>= \case 
     True -> (lift . throwError $ GenMError "Error: Multiple variable declaration")
-    False -> ContT $ \next -> do
+    False -> Cont.ContT $ \next -> do
             varName <- getVarName ident
             (type2, operand) <- transExprCompatibleType type1 expr >>= uncurry zextBool
             ty1 <- transType type1
