@@ -130,7 +130,7 @@ getBuiltinFunctions = Map.fromList [
 
 transProgram :: GenM m => ABS.Program -> m Program
 transProgram (ABS.Prog topdefs) = do
-    runContT (forM_ topdefs collectTopDef) $ \_ -> forM_ topdefs transTopDef
+    runContT (mapM_ collectTopDef topdefs) $ \_ -> mapM_ transTopDef topdefs
     classDefs <- gets $ toList . Seq.reverse . _classDefs
     stringDefs <- gets $ Map.elems . _stringsDefs
     functionDefs <- gets $ toList . Seq.reverse . _functionDefs
@@ -138,8 +138,8 @@ transProgram (ABS.Prog topdefs) = do
   
   where
     collectTopDef :: GenM m => ABS.TopDef -> ContT () m ()
-    collectTopDef (ABS.ClassDef ident items) = collectClassDef ident Nothing >> forM_ items (collectClassItem ident)
-    collectTopDef (ABS.ClassExtDef ident1 ident2 items) = collectClassDef ident1 (Just ident2) >> forM_ items (collectClassItem ident1)
+    collectTopDef (ABS.ClassDef ident items) = collectClassDef ident Nothing >> mapM_ (collectClassItem ident) items
+    collectTopDef (ABS.ClassExtDef ident1 ident2 items) = collectClassDef ident1 (Just ident2) >> mapM_ (collectClassItem ident1) items
     collectTopDef (ABS.TopFunDef fun@(ABS.FunDef _ ident@(ABS.Ident str) _ _)) = (lift . asks $ (Map.lookup ident) . _functions) >>= \case
         Just _ -> lift . throwError $ GenMError "Error: multiple function declaration"
         Nothing -> ContT $ \next -> local (\env -> env{
@@ -202,7 +202,7 @@ transClassDef ident parent items = do
         Just parent -> fmap ((Seq.empty Seq.|>) . TypeClass) (asks $ _classAddr . (Map.! parent) . _classes)   
     modify $ \s -> s {_fields = fields}
     class_ <- asks $ (Map.! ident) . _classes
-    local (\env -> env{_currentClass = Just class_}) $ forM_ items transClassItem
+    local (\env -> env{_currentClass = Just class_}) $ mapM_ transClassItem items
     classAddr <- asks $ _classAddr . (Map.! ident) . _classes
     fields <- gets $ toList . Seq.reverse . _fields
     modify $ \s -> s {_classDefs = (ClassDef classAddr fields) Seq.<| _classDefs s}
@@ -247,7 +247,7 @@ transFunDef fun (ABS.FunDef type_ ident args (ABS.Blk stmts)) = do
         _usedIdentifiers = Set.empty
     }
 
-    local (\env -> env{_currentFunction = Just fun}) $ runContT (forM_ args transArg >> forM_ stmts transStmt) (const setReturn) 
+    local (\env -> env{_currentFunction = Just fun}) $ runContT (mapM_ transArg args >> mapM_ transStmt stmts) (const setReturn) 
 
     ty <- transType type_
     funAddr <- return . _functionAddress $ fun
@@ -297,7 +297,7 @@ transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockV
 
 transBlock :: GenM m => ABS.Block -> ContT () m ()
 transBlock (ABS.Blk stmts) = do
-    lift . local (\env -> env{_blockVariables = Set.empty}) $ runContT (forM_ stmts transStmt) return
+    lift . local (\env -> env{_blockVariables = Set.empty}) $ runContT (mapM_ transStmt stmts) return
     (lift isReturn) >>= \case 
         True -> (ContT $ \next -> return ()) 
         False -> (return ())
@@ -309,7 +309,7 @@ transStmt (ABS.BStmt block) = transBlock block
 
 transStmt (ABS.SExp expr) = lift . void $ transExpr expr
 
-transStmt (ABS.Decl type_ items) = forM_ items $ transItem type_
+transStmt (ABS.Decl type_ items) = mapM_ (transItem type_) items
 
 transStmt (ABS.Ass lval expr) = lift $ do
     (type1, addr) <- transLVal lval
