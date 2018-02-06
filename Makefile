@@ -1,5 +1,4 @@
 all:
-	bnfc -haskell -o src/BNFC-gen/ ./src/latte.cf
 	cabal configure
 	cabal build
 	cp ./dist/build/latc/latc .
