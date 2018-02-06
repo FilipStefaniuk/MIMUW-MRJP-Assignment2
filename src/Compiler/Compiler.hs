@@ -83,7 +83,7 @@ instance Error GenMError where
     noMsg = GenMError "internal error"
     strMsg = GenMError
 
-type GenM m = (MonadState GenMState m, MonadReader GenMEnv m, MonadError GenMError m, MonadIO m)
+type GenM m = (Functor m, MonadState GenMState m, MonadReader GenMEnv m, MonadError GenMError m, MonadIO m)
 
 gen :: ABS.Program -> ErrorT GenMError IO Program
 gen prog = evalStateT (runReaderT (transProgram prog) initGenMEnv) initGenMState
