@@ -1,5 +1,11 @@
+class A {
+	A first;
+}
+
 int main() {
-	string a = "Ala ";
-	string b = "ma kota.";
+	A a = new A;
+	if (a.first == (A)null)
+		printString("empty");
+
 	return 0;
 }

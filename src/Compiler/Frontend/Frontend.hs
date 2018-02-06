@@ -125,7 +125,8 @@ getBuiltinFunctions = Map.fromList [
     (ABS.Ident "readInt", Function (ABS.Ident "readInt") ABS.Int [] (GlobalIdent "readInt")),
     (ABS.Ident "readString", Function (ABS.Ident "readString") ABS.Str [] (GlobalIdent "readString")),
     (ABS.Ident "concat", Function (ABS.Ident "concat") ABS.Str [ABS.Str, ABS.Str] (GlobalIdent "concat")),
-    (ABS.Ident "malloc", Function (ABS.Ident "malloc") ABS.Str [ABS.Int] (GlobalIdent "malloc"))
+    (ABS.Ident "malloc", Function (ABS.Ident "malloc") ABS.Str [ABS.Int] (GlobalIdent "malloc")),
+    (ABS.Ident "llvm.memset", Function(ABS.Ident "llvm.memset") ABS.Void [] (GlobalIdent "llvm.memset.p0i8.i32"))
     ]
 
 transProgram :: GenM m => ABS.Program -> m Program
@@ -173,9 +174,11 @@ transProgram (ABS.Prog topdefs) = do
         Nothing -> lift . throwError $ GenMError "ERROR: internal error"
         Just class_ -> case Map.lookup ident $ _classMethods class_ of
             Just _ -> lift . throwError $ GenMError "ERROR: multiple method declaration"
-            Nothing -> ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
-                _classMethods = Map.insert ident (getFunction (str1 ++ "." ++ str2) fun) $ _classMethods class_
-            } $ _classes env}) $ next ()
+            Nothing -> let method = getFunction (str1 ++ "." ++ str2) fun in
+                ContT $ \next -> local (\env -> env{_classes = Map.insert classIdent class_{
+                _classMethods = Map.insert ident (method{
+                    _functionArguments = (ABS.Obj . _className $ class_):(_functionArguments method)
+                }) $ _classMethods class_} $ _classes env}) $ next ()
     
     getFunction :: String -> ABS.FunDef -> Function
     getFunction name (ABS.FunDef type_ ident args block) = Function {
@@ -215,7 +218,7 @@ transClassDef ident parent items = do
         Just class_ <- asks _currentClass
         checkOverride (_classParent class_) ((Map.! ident) . _classMethods $ class_)
         fun <- return . (Map.! ident) . _classMethods $ class_
-        transFunDef fun (ABS.FunDef type_ ident ((ABS.Ar (ABS.Obj . _className $ class_) (ABS.Ident "this")):args) block)
+        transFunDef fun (ABS.FunDef type_ ident ((ABS.Ar (ABS.Obj . _className $ class_) (ABS.Ident "self")):args) block)
 
     checkInheritence :: GenM m => Maybe ABS.Ident -> Set.Set ABS.Ident -> m () 
     checkInheritence Nothing  _ = return ()
@@ -282,7 +285,7 @@ transArg (ABS.Ar type_ ident@(ABS.Ident str)) = asks (Set.member ident . _blockV
         emitInstr $ InstrStore ty (Loc varName) (Ptr ty) res 
         
         modify $ \s -> s{
-            _localVariables = (Alloc res (Ptr ty)) Seq.<| (_localVariables s),
+            _localVariables = (Alloc res ty) Seq.<| (_localVariables s),
             _arguments = (ty, varName) Seq.<| (_arguments s)
         }
         
@@ -307,7 +310,7 @@ transStmt (ABS.Decl type_ items) = forM_ items $ transItem type_
 
 transStmt (ABS.Ass lval expr) = lift $ do
     (type1, addr) <- transLVal lval
-    (type2, operand) <- transExprCompatibleType type1 expr
+    (type2, operand) <- transExprCompatibleType type1 expr >>= uncurry zextBool
     ty1 <- transType type1
     ty2 <- transType type2
     emitInstr $ InstrStore ty2 operand (Ptr ty1) addr 
@@ -318,7 +321,7 @@ transStmt (ABS.Decr lval) = transStmt . (ABS.Ass lval) $ ABS.EAdd (ABS.EVar lval
 
 transStmt (ABS.Ret expr) = do
     (Just fun) <- lift . asks $ _currentFunction
-    (type_, op) <- lift $ transExprCompatibleType (_functionType fun) expr
+    (type_, op) <- lift $ transExprCompatibleType (_functionType fun) expr >>= uncurry zextBool
     ty <- lift $ transType type_
     lift . emitEnd $ BlockEndReturn ty op
     ContT $ \next -> return ()
@@ -329,8 +332,23 @@ transStmt ABS.VRet = do
     lift . emitEnd $ BlockEndReturnVoid
     ContT $ \next -> return ()
     
-transStmt (ABS.Cond expr stmt) = transStmt $ ABS.CondElse expr stmt ABS.Empty
+transStmt (ABS.Cond expr stmt) = do
+    operand <- lift $ transExprRequireType ABS.Bool expr
+    case operand of
+        ConstBool True -> transBlock (ABS.Blk [stmt])
+        ConstBool False -> return ()
+        _ -> lift $ do
+            begin <- gets _currentBlock
 
+            ifBlock <- newBlock
+            modify $ \s -> s{_currentBlock = ifBlock}
+            runContT (transBlock (ABS.Blk [stmt])) return
+            
+            end <- newBlock
+            emitEnd $ BlockEndBranch (LocalIdent . show $ end)
+            (inBlock begin) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ ifBlock) (LocalIdent . show $ end)
+            modify $ \s -> s{_currentBlock = end}
+            
 transStmt (ABS.CondElse expr stmt1 stmt2) = do
     operand <- lift $ transExprRequireType ABS.Bool expr
     case operand of
@@ -344,25 +362,18 @@ transStmt (ABS.CondElse expr stmt1 stmt2) = do
             lift $ runContT (transBlock (ABS.Blk [stmt1])) return
             trueBlockRet <- lift $ isReturn
 
-            case stmt2 of
-                ABS.Empty -> if trueBlockRet then ContT $ \next -> return () else lift $ do
-                    end <- newBlock
-                    emitEnd $ BlockEndBranch (LocalIdent . show $ end)
-                    (inBlock begin) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ trueBlock) (LocalIdent . show $ end)
-                    modify $ \s -> s{_currentBlock = end}
-                    
-                _ -> do
-                    falseBlock <- lift $ newBlock
-                    lift . modify $ \s -> s{_currentBlock = falseBlock}
-                    lift $ runContT (transBlock (ABS.Blk [stmt2])) return
-                    falseBlockRet <- lift $ isReturn
-                    lift . (inBlock begin) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ trueBlock) (LocalIdent . show $ falseBlock)
-                    
-                    if trueBlockRet && falseBlockRet then ContT $ \next -> return () else lift $ do
-                        end <- newBlock
-                        emitEnd $ BlockEndBranch (LocalIdent . show $ end)
-                        (inBlock trueBlock) . emitEnd $ BlockEndBranch (LocalIdent . show $ end)
-                        modify $ \s -> s{_currentBlock = end}
+            falseBlock <- lift $ newBlock
+            lift . modify $ \s -> s{_currentBlock = falseBlock}
+            lift $ runContT (transBlock (ABS.Blk [stmt2])) return
+            falseBlockRet <- lift $ isReturn
+
+            lift . (inBlock begin) . emitEnd $ BlockEndBranchCond Size1 operand (LocalIdent . show $ trueBlock) (LocalIdent . show $ falseBlock)
+            
+            if trueBlockRet && falseBlockRet then ContT $ \next -> return () else lift $ do
+                end <- newBlock
+                emitEnd $ BlockEndBranch (LocalIdent . show $ end)
+                (inBlock trueBlock) . emitEnd $ BlockEndBranch (LocalIdent . show $ end)
+                modify $ \s -> s{_currentBlock = end}
                 
 transStmt (ABS.While expr stmt) = lift $ do
     cond <- newBlock
@@ -407,10 +418,10 @@ transItem type1 (ABS.Init ident@(ABS.Ident str) expr) =
     (lift . throwError $ GenMError "Error: Multiple variable declaration")
     . ContT $ \next -> do
             varName <- getVarName ident
-            (type2, operand) <- transExprCompatibleType type1 expr
+            (type2, operand) <- transExprCompatibleType type1 expr >>= uncurry zextBool
             ty1 <- transType type1
             ty2 <- transType type2
-            emitInstr $ InstrStore ty2 operand ty1 varName
+            emitInstr $ InstrStore ty2 operand (Ptr ty1) varName
 
             modify $ \s -> s{_localVariables = (Alloc varName ty1) Seq.<| (_localVariables s)}
 
@@ -427,10 +438,9 @@ transItem type1 (ABS.Init ident@(ABS.Ident str) expr) =
         return $ LocalIdent str
 
     getNextFreeName :: GenM m => String -> Integer -> m String
-    getNextFreeName str int = 
-        ifM (gets $ (Set.member (str ++ (show int))) . _usedIdentifiers)
-        (getNextFreeName str (int + 1))
-        (return $ str ++ (show int))
+    getNextFreeName str int = (gets $ (Set.member (str ++ (show int))) . _usedIdentifiers) >>= \case
+        True -> getNextFreeName str (int + 1)
+        False -> return $ str ++ (show int)
 
 transExpr :: GenM m => ABS.Expr -> m (ABS.Type, Operand)
 transExpr (ABS.ELitInt integer) = return (ABS.Int, ConstInt integer)
@@ -446,7 +456,10 @@ transExpr (ABS.EVar lval) = do
     ty <- transType type_
     res <- getNextLocalIdent
     emitInstr $ InstrLoad res ty (Ptr ty) addr
-    return (type_, Loc res)
+    if type_ /= ABS.Bool then return (type_, Loc res) else do
+        res2 <- getNextLocalIdent
+        emitInstr $ InstrTrunc res2 Size8 (Loc res) Size1
+        return (ABS.Bool, Loc res2)
 
 transExpr (ABS.EString string) = do
     (StringDef addr ty _) <- (gets $ (Map.lookup string) . _stringsDefs) >>= \case
@@ -471,7 +484,7 @@ transExpr call@(ABS.ECall ident exprs) = asks (_currentClass) >>= getClassWithMe
         Nothing -> throwError $ GenMError "ERROR: Unknown function identifier"
         Just (Function _ type_ argTypes funAddr) -> do
             unless (length exprs == length argTypes) . throwError $ GenMError "ERROR: Wrong number of arguments"
-            exprs <- zipWithM transExprCompatibleType argTypes exprs
+            exprs <- zipWithM transExprCompatibleType argTypes exprs >>= mapM (uncurry zextBool)
             types <- mapM transType argTypes
             if type_ == ABS.Void then do
                 emitInstr . InstrVoidCall funAddr $ zip types (map snd exprs)
@@ -480,7 +493,10 @@ transExpr call@(ABS.ECall ident exprs) = asks (_currentClass) >>= getClassWithMe
                 ty <- transType type_ 
                 res <- getNextLocalIdent
                 emitInstr . InstrCall res ty funAddr $ zip types (map snd exprs)
-                return (type_, Loc res)
+                if type_ /= ABS.Bool then return (type_, Loc res) else do
+                    res2 <- getNextLocalIdent
+                    emitInstr $ InstrTrunc res2 Size8 (Loc res) Size1
+                    return (ABS.Bool, Loc res2)
 
 transExpr (ABS.EMetCall expr ident exprs) = do
     (type_, operand) <- transExpr expr
@@ -488,10 +504,10 @@ transExpr (ABS.EMetCall expr ident exprs) = do
         ABS.Obj classIdent -> (asks $ (Map.lookup classIdent) . _classes) >>= getClassWithMethod ident >>= \case  
             Nothing -> throwError $ GenMError "ERROR: Unknown method name"
             Just class_ -> do
-                (Function _ retType argTypes funAddr) <- return . (Map.! ident) . _classMethods $ class_
+                (Function _ type_ argTypes funAddr) <- return . (Map.! ident) . _classMethods $ class_
                 -- Copied code, move to function: transFunction
                 unless (length exprs + 1 == length argTypes) . throwError $ GenMError "ERROR: Wrong number of arguments"
-                exprs <- zipWithM transExprCompatibleType argTypes (expr:exprs)
+                exprs <- zipWithM transExprCompatibleType argTypes (expr:exprs) >>= mapM (uncurry zextBool)
                 types <- mapM transType argTypes
                 if type_ == ABS.Void then do
                     emitInstr . InstrVoidCall funAddr $ zip types (map snd exprs)
@@ -500,7 +516,10 @@ transExpr (ABS.EMetCall expr ident exprs) = do
                     ty <- transType type_ 
                     res <- getNextLocalIdent
                     emitInstr . InstrCall res ty funAddr $ zip types (map snd exprs)
-                    return (type_, Loc res)
+                    if type_ /= ABS.Bool then return (type_, Loc res) else do
+                        res2 <- getNextLocalIdent
+                        emitInstr $ InstrTrunc res2 Size8 (Loc res) Size1
+                        return (ABS.Bool, Loc res2)
         
         _ -> throwError $ GenMError "ERROR: Call on non class type"
 
@@ -511,9 +530,11 @@ transExpr (ABS.ENewObj ident) = (asks $ (Map.lookup ident) . _classes) >>= \case
         size <- computeClassSize class_
         ty <- return . TypeClass . _classAddr $ class_
         malloc <- asks $ _functionAddress . (Map.! (ABS.Ident "malloc")) . _functions
+        memset <- asks $ _functionAddress . (Map.! (ABS.Ident "llvm.memset")) . _functions
         res1 <- getNextLocalIdent
         res2 <- getNextLocalIdent
         emitInstr $ InstrCall res1 (Ptr Size8) malloc [(Size32, ConstInt size)]
+        emitInstr $ InstrVoidCall memset [(Ptr Size8, Loc res1), (Size8, ConstInt 0), (Size32, ConstInt size), (Size32, ConstInt 1), (Size1, ConstBool False)]
         emitInstr $ InstrBitcast res2 (Ptr Size8) (Loc res1) (Ptr ty)
         return (ABS.Obj ident, Loc res2)
 
@@ -532,7 +553,8 @@ transExpr (ABS.ENewArr type_ expr) = do
     operand <- transExprRequireType (ABS.Int) expr
     when (type_ == ABS.Void) . throwError $ GenMError "Error: void array type"
     malloc <- asks $ _functionAddress . (Map.! (ABS.Ident "malloc")) . _functions
-    
+    memset <- asks $ _functionAddress . (Map.! (ABS.Ident "llvm.memset")) . _functions
+
     res1 <- getNextLocalIdent
     res2 <- getNextLocalIdent
     res3 <- getNextLocalIdent
@@ -541,6 +563,7 @@ transExpr (ABS.ENewArr type_ expr) = do
     emitInstr $ InstrBinOp res1 Times Size32 operand (ConstInt (getTypeSize type_))
     emitInstr $ InstrBinOp res2 Plus Size32 (Loc res1) (ConstInt (getTypeSize ABS.Int))
     emitInstr $ InstrCall res3 (Ptr Size8) malloc [(Size32, Loc res2)]
+    emitInstr $ InstrVoidCall memset [(Ptr Size8, Loc res3), (Size8, ConstInt 0), (Size32, Loc res2), (Size32, ConstInt 1), (Size1, ConstBool False)]
     emitInstr $ InstrBitcast res4 (Ptr Size8) (Loc res3) (Ptr Size32)
     emitInstr $ InstrStore Size32 operand (Ptr Size32) res4
     return (ABS.Arr type_, Loc res3)
@@ -564,6 +587,11 @@ transExpr (ABS.EMul expr1 mulop expr2) = do
     transMulOp ABS.Times = Times
     transMulOp ABS.Div = Div
     transMulOp ABS.Mod = Mod
+
+transExpr (ABS.ECast ident expr) = do
+    ty <- transType (ABS.Obj ident)
+    (type_, op) <- transExprCompatibleType (ABS.Obj ident) expr
+    return (type_, op)
 
 transExpr (ABS.EAdd expr1 addop expr2) = do
     (type1, operand1) <- transExpr expr1
@@ -591,13 +619,12 @@ transExpr (ABS.EAdd expr1 addop expr2) = do
 
 transExpr (ABS.ERel expr1 relop expr2) = do
     (type1, operand1) <- transExpr expr1
-    (type2, operand2) <- transExpr expr2
+    operand2 <- transExprRequireType type1 expr2
     case (operand1, relop, operand2) of
         (ConstInt int1, relop, ConstInt int2) -> return (ABS.Bool, ConstBool $ computeRelop relop int1 int2)
         (ConstBool bool1, relop, ConstBool bool2) -> return (ABS.Bool, ConstBool $ computeRelop relop bool1 bool2)
         _ -> do 
-            unless ((type1 == ABS.Int && type2 == ABS.Int) || (type1 == ABS.Bool && type2 == ABS.Bool)) . throwError $ GenMError "ERROR: incomparable types"
-            ty <- transType type1
+            ty <- if (type1 == ABS.Bool) then return Size1 else transType type1
             res <- getNextLocalIdent
             emitInstr $ InstrCmp res (transRelOp relop) ty operand1 operand2
             return (ABS.Bool, Loc res)
@@ -692,19 +719,19 @@ transLVal (ABS.LAttr expr ident) = do
             unless (ident == (ABS.Ident "length")) . throwError $ GenMError "ERROR: Access of different than 'length' array attribute"
             res <- getNextLocalIdent
             ty <- transType type_
-            emitInstr $ InstrBitcast res ty operand Size32
+            emitInstr $ InstrBitcast res ty operand (Ptr Size32)
             return (ABS.Int, res)
 
         ABS.Obj classIdent -> (asks $ (Map.lookup classIdent) . _classes) >>= getClassWithField ident >>= \case
             Nothing -> throwError $ GenMError "ERROR: Unknown identifier"
             Just class_ -> do    
                 ty <- transType type_
-                (ty, op) <- if _className class_ == classIdent then return (ty, operand)
-                else do
-                    res <- getNextLocalIdent
-                    ty2 <- return . TypeClass . _classAddr $ class_
-                    emitInstr $ InstrBitcast res ty operand ty2
-                    return $ (ty2, Loc res)
+                (Ptr ty, op) <- if _className class_ == classIdent then return (ty, operand)
+                    else do
+                        res <- getNextLocalIdent
+                        ty2 <- return . TypeClass . _classAddr $ class_
+                        emitInstr $ InstrBitcast res ty operand ty2
+                        return $ (ty2, Loc res)
                 (type_, nr) <- return . (Map.! ident) . _classFields $ class_
                 res <- getNextLocalIdent
                 emitInstr $ InstrGetElementPtr res ty (Ptr ty) op [ConstInt 0, ConstInt nr]
@@ -728,16 +755,35 @@ transType (ABS.Obj ident) = (asks $ (Map.lookup ident) . _classes) >>= \case
     Nothing -> throwError $ GenMError "ERROR: Unknown type"
     Just class_ -> return . Ptr . TypeClass . _classAddr $ class_
 
--- TODO
 transExprCompatibleType :: GenM m => ABS.Type -> ABS.Expr -> m (ABS.Type, Operand)
-transExprCompatibleType type_ expr = transExpr expr
+transExprCompatibleType type_ expr = do
+    (exprType, op) <- transExpr expr
+    case (type_, exprType) of
+        (ABS.Obj ident1, ABS.Obj ident2) -> do
+            isAnscestor ident1 ident2 >>= flip unless (throwError $ GenMError "ERROR: Incompatible types classes")
+            ty1 <- transType exprType
+            ty2 <- transType type_
+            res <- getNextLocalIdent
+            emitInstr $ InstrBitcast res ty1 op ty2
+            return (type_, Loc res)
+
+        (ABS.Obj ident1, ABS.Null) -> return (type_, op)
+        (ABS.Arr _, ABS.Null) -> return (type_, op)
+        (ABS.Str, ABS.Null) -> return (type_, op)
+        (type1, type2) -> if (type1 == type2) then return (exprType, op) else throwError $ GenMError "ERROR: Incompatible types"  
+  where
+    isAnscestor :: GenM m => ABS.Ident -> ABS.Ident -> m Bool
+    isAnscestor ident1 ident2 = if (ident1 == ident2) then return True else
+        (asks $ _classParent . (Map.! ident2) . _classes) >>= \case
+            Nothing -> return False
+            Just ident2 -> isAnscestor ident1 ident2
+
 
 transExprRequireType :: GenM m => ABS.Type -> ABS.Expr -> m Operand
 transExprRequireType type_ expr = do
-    (exprType, operand ) <- transExpr expr
-    unless (type_ == exprType) . throwError $ GenMError "error"
+    (exprType, operand) <- transExpr expr
+    unless (type_ == exprType) . throwError $ GenMError "ERROR: Invalid type"
     return operand        
------------
 
 getTypeSize :: ABS.Type -> Integer
 getTypeSize ABS.Int = 4
@@ -745,6 +791,15 @@ getTypeSize ABS.Bool = 1
 getTypeSize ABS.Str = 1
 getTypeSize (ABS.Arr _) = 1
 getTypeSize (ABS.Obj _) = 1
+
+zextBool :: GenM m => ABS.Type -> Operand -> m (ABS.Type, Operand)
+zextBool ABS.Bool (ConstBool True) = return (ABS.Bool, ConstInt 1)
+zextBool ABS.Bool (ConstBool False) = return (ABS.Bool, ConstInt 0)
+zextBool ABS.Bool operand = do
+    res <- getNextLocalIdent
+    emitInstr $ InstrZext res Size1 operand Size8
+    return (ABS.Bool, Loc res)
+zextBool type_ op = return (type_, op)
 
 getClassWithMethod :: GenM m => ABS.Ident -> Maybe Class -> m (Maybe Class)
 getClassWithMethod _ Nothing = return Nothing
@@ -755,9 +810,9 @@ getClassWithMethod methodIdent (Just class_) =
         Nothing -> return Nothing
         Just ident -> (asks $ (Map.lookup ident) . _classes) >>= getClassWithMethod  methodIdent 
 
-getClassByField :: GenM m => ABS.Ident -> Maybe Class-> m (Maybe Class)
+getClassWithField :: GenM m => ABS.Ident -> Maybe Class-> m (Maybe Class)
 getClassWithField _ Nothing = return Nothing
-getClassByField fieldIdent (Just class_) =
+getClassWithField fieldIdent (Just class_) =
     if (Map.member fieldIdent) . _classFields $ class_
     then return . Just $ class_
     else case _classParent class_ of

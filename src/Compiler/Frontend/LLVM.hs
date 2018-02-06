@@ -55,6 +55,8 @@ data Instruction
     | InstrGetElementPtr LocalIdent Type Type Operand [Operand]
     | InstrCmp LocalIdent Cond Type Operand Operand
     | InstrBitcast LocalIdent Type Operand Type
+    | InstrTrunc LocalIdent Type Operand Type
+    | InstrZext LocalIdent Type Operand Type
     | InstrLoad LocalIdent Type Type LocalIdent
     | InstrStore Type Operand Type LocalIdent
     deriving (Eq, Ord, Show)

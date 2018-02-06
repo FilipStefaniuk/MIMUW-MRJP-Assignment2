@@ -46,7 +46,7 @@ Init.           Item ::= Ident "=" Expr ;
 LVar.           LVal ::= Ident ;
 LArr.           LVal ::= Expr7 "[" Expr "]" ;
 LAttr.          LVal ::= Expr7 "." Ident ;
-LSelf.          LVal ::= "this" ;
+LSelf.          LVal ::= "self" ;
 
 -- types ---------------------------------------------------
 
@@ -72,6 +72,7 @@ ECall.          Expr7 ::= Ident "(" [Expr] ")" ;
 EMetCall.       Expr7 ::= Expr7 "." Ident "(" [Expr] ")" ;
 ENewObj.        Expr6 ::= "new" Ident ;
 ENewArr.        Expr6 ::= "new" Type "[" Expr "]" ;
+ECast.          Expr6 ::= "(" Ident ")" Expr7 ;
 Neg.            Expr5 ::= "-" Expr6 ;
 Not.            Expr5 ::= "!" Expr6 ;
 EMul.           Expr4 ::= Expr4 MulOp Expr5 ;

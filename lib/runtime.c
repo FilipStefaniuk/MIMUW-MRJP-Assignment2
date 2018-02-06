@@ -27,7 +27,7 @@ char* readString() {
 	size_t len = 0;
 	size_t read;
 	if ((read = getline(&line, &len, stdin)) != -1) {
-	  char* cleanedLine = malloc(sizeof(char)*(strlen(line)));
+	  char* cleanedLine = (char*) malloc(sizeof(char)*(strlen(line)));
 	  for (int i = 0; i < strlen(line); i++) {
 	    cleanedLine[i] = line[i];
 	  }
@@ -40,6 +40,6 @@ char* readString() {
 }
 
 char* concat(char* s1, char* s2) {
-    char* t = malloc(strlen(s1) + strlen(s2) + 1);
+    char* t = (char*)malloc(strlen(s1) + strlen(s2) + 1);
     return strcat(strcpy(t,s1), s2);
 }
