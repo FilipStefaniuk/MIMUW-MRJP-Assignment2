@@ -130,18 +130,24 @@ getBuiltinFunctions = Map.fromList [
 
 transProgram :: GenM m => ABS.Program -> m Program
 transProgram (ABS.Prog topdefs) = do
-    runContT (mapM_ collectTopDef topdefs) $ \_ -> mapM_ transTopDef topdefs
+    runContT (mapM_ collectTopDef topdefs) $ \_ -> mapM_ transTopDef topdefs >> checkMain
     classDefs <- gets $ toList . Seq.reverse . _classDefs
     stringDefs <- gets $ Map.elems . _stringsDefs
     functionDefs <- gets $ toList . Seq.reverse . _functionDefs
     return (Program classDefs stringDefs functionDefs)
   
   where
+    checkMain :: GenM m => m ()
+    checkMain = (asks $ (Map.lookup (ABS.Ident "main") . _functions)) >>= \case
+        Nothing -> throwError $ GenMError "ERROR: missing main function"
+        Just (Function _ type_ types _) -> unless (type_ == ABS.Int && null types) . throwError $ GenMError "ERROR: wrong type of main function"
+
+
     collectTopDef :: GenM m => ABS.TopDef -> ContT () m ()
     collectTopDef (ABS.ClassDef ident items) = collectClassDef ident Nothing >> mapM_ (collectClassItem ident) items
     collectTopDef (ABS.ClassExtDef ident1 ident2 items) = collectClassDef ident1 (Just ident2) >> mapM_ (collectClassItem ident1) items
     collectTopDef (ABS.TopFunDef fun@(ABS.FunDef _ ident@(ABS.Ident str) _ _)) = (lift . asks $ (Map.lookup ident) . _functions) >>= \case
-        Just _ -> lift . throwError $ GenMError "Error: multiple function declaration"
+        Just _ -> lift . throwError $ GenMError "ERROR: multiple function declaration"
         Nothing -> ContT $ \next -> local (\env -> env{
             _functions = Map.insert ident (getFunction str fun) $ _functions env
         }) $ next ()
