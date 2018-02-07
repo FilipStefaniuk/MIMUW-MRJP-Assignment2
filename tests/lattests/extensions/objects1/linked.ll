@@ -11,10 +11,10 @@ declare void @llvm.memset.p0i8.i32(i8*, i8, i32, i32, i1)
 %class.Stack = type { %class.Node* }
 
 
-define void @Node.setElem(%class.Node* %this, i32 %c) {
+define void @Node.setElem(%class.Node* %self, i32 %c) {
   %1 = alloca %class.Node*
   %2 = alloca i32
-  store %class.Node* %this, %class.Node** %1
+  store %class.Node* %self, %class.Node** %1
   store i32 %c, i32* %2
   %3 = load %class.Node*, %class.Node** %1
   %4 = getelementptr %class.Node, %class.Node* %3, i32 0, i32 0
@@ -23,10 +23,10 @@ define void @Node.setElem(%class.Node* %this, i32 %c) {
   ret void
 }
 
-define void @Node.setNext(%class.Node* %this, %class.Node* %n) {
+define void @Node.setNext(%class.Node* %self, %class.Node* %n) {
   %1 = alloca %class.Node*
   %2 = alloca %class.Node*
-  store %class.Node* %this, %class.Node** %1
+  store %class.Node* %self, %class.Node** %1
   store %class.Node* %n, %class.Node** %2
   %3 = load %class.Node*, %class.Node** %1
   %4 = getelementptr %class.Node, %class.Node* %3, i32 0, i32 1
@@ -36,18 +36,18 @@ define void @Node.setNext(%class.Node* %this, %class.Node* %n) {
   ret void
 }
 
-define i32 @Node.getElem(%class.Node* %this) {
+define i32 @Node.getElem(%class.Node* %self) {
   %1 = alloca %class.Node*
-  store %class.Node* %this, %class.Node** %1
+  store %class.Node* %self, %class.Node** %1
   %2 = load %class.Node*, %class.Node** %1
   %3 = getelementptr %class.Node, %class.Node* %2, i32 0, i32 0
   %4 = load i32, i32* %3
   ret i32 %4
 }
 
-define %class.Node* @Node.getNext(%class.Node* %this) {
+define %class.Node* @Node.getNext(%class.Node* %self) {
   %1 = alloca %class.Node*
-  store %class.Node* %this, %class.Node** %1
+  store %class.Node* %self, %class.Node** %1
   %2 = load %class.Node*, %class.Node** %1
   %3 = getelementptr %class.Node, %class.Node* %2, i32 0, i32 1
   %4 = load %class.Node*, %class.Node** %3
@@ -55,11 +55,11 @@ define %class.Node* @Node.getNext(%class.Node* %this) {
   ret %class.Node* %5
 }
 
-define void @Stack.push(%class.Stack* %this, i32 %c) {
+define void @Stack.push(%class.Stack* %self, i32 %c) {
   %1 = alloca %class.Stack*
   %2 = alloca i32
   %newHead = alloca %class.Node*
-  store %class.Stack* %this, %class.Stack** %1
+  store %class.Stack* %self, %class.Stack** %1
   store i32 %c, i32* %2
   %3 = call i8* @malloc(i32 5)
   call void @llvm.memset.p0i8.i32(i8* %3, i8 0, i32 5, i32 1, i1 false)
@@ -87,9 +87,9 @@ define void @Stack.push(%class.Stack* %this, i32 %c) {
   ret void
 }
 
-define i8 @Stack.isEmpty(%class.Stack* %this) {
+define i8 @Stack.isEmpty(%class.Stack* %self) {
   %1 = alloca %class.Stack*
-  store %class.Stack* %this, %class.Stack** %1
+  store %class.Stack* %self, %class.Stack** %1
   %2 = load %class.Stack*, %class.Stack** %1
   %3 = getelementptr %class.Stack, %class.Stack* %2, i32 0, i32 0
   %4 = load %class.Node*, %class.Node** %3
@@ -98,9 +98,9 @@ define i8 @Stack.isEmpty(%class.Stack* %this) {
   ret i8 %6
 }
 
-define i32 @Stack.top(%class.Stack* %this) {
+define i32 @Stack.top(%class.Stack* %self) {
   %1 = alloca %class.Stack*
-  store %class.Stack* %this, %class.Stack** %1
+  store %class.Stack* %self, %class.Stack** %1
   %2 = load %class.Stack*, %class.Stack** %1
   %3 = getelementptr %class.Stack, %class.Stack* %2, i32 0, i32 0
   %4 = load %class.Node*, %class.Node** %3
@@ -112,9 +112,9 @@ define i32 @Stack.top(%class.Stack* %this) {
   ret i32 %9
 }
 
-define void @Stack.pop(%class.Stack* %this) {
+define void @Stack.pop(%class.Stack* %self) {
   %1 = alloca %class.Stack*
-  store %class.Stack* %this, %class.Stack** %1
+  store %class.Stack* %self, %class.Stack** %1
   %2 = load %class.Stack*, %class.Stack** %1
   %3 = getelementptr %class.Stack, %class.Stack* %2, i32 0, i32 0
   %4 = load %class.Stack*, %class.Stack** %1

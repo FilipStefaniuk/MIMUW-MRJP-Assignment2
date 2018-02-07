@@ -4,6 +4,7 @@ module Main where
 import System.Environment
 import System.Process   
 import System.Exit 
+import System.IO
 import System.FilePath.Posix
 import Control.Monad.Error
 
@@ -30,7 +31,6 @@ compileFile inputFilename = let outputFilename = replaceExtension inputFilename 
     rawSystem "llvm-link" ["-o", replaceExtension outputFilename "bc", "lib/runtime.bc", "tmp.bc"] >>
     rawSystem "rm" ["tmp.bc"]
 
-
 parseProgram :: String -> ErrorT GenMError IO Program
 parseProgram input = case pProgram $ myLexer input of
     Bad e -> throwError . GenMError $ e
@@ -38,5 +38,5 @@ parseProgram input = case pProgram $ myLexer input of
 
 compile :: String -> IO String
 compile input = runErrorT (parseProgram input >>= gen) >>= \case
-    Left e -> putStr (show e) >> exitWith (ExitFailure 1)
-    Right program -> return $ printProgram program
+    Left e -> hPutStrLn stderr "ERROR" >> hPutStrLn stderr (show e) >> exitWith (ExitFailure 1)
+    Right program -> hPutStrLn stderr "OK" >> (return . printProgram $ program)

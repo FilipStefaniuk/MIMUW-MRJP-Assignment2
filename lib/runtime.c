@@ -18,7 +18,7 @@ void error() {
 
 int readInt() {
     int x;
-    scanf("%d\n", &x);
+    scanf("%d", &x);
     return x;
 }
 
